@@ -1769,12 +1769,13 @@ void MainWindow::onMessageReceived(const QString &message)
     }
     else if (parts[0].trimmed() == "SynchronizeTime")
     {
-        QRegExp rx("SynchronizeTime:(\\d{2}:\\d{2}:\\d{2}):(\\d{4}-\\d{2}-\\d{2})");
-        int pos = rx.indexIn(message);
-        if (pos > -1)
+        QRegularExpression rx("SynchronizeTime:(\\d{2}:\\d{2}:\\d{2}):(\\d{4}-\\d{2}-\\d{2})");
+        QRegularExpressionMatch match = rx.match(message);
+        //        int pos = rx.indexIn(message);
+        if (match.hasMatch())
         {
-            QString time = rx.cap(1);
-            QString date = rx.cap(2);
+            QString time = match.captured(1);
+            QString date = match.captured(2);
             Logger::Log("SynchronizeTime ...", LogLevel::DEBUG, DeviceType::MAIN);
             synchronizeTime(time, date);
             setMountUTC(time, date);
@@ -2894,7 +2895,7 @@ cv::Mat MainWindow::colorImage(cv::Mat img16)
     Logger::Log("Matrices for image processing created.", LogLevel::INFO, DeviceType::MAIN);
     Tools::ImageSoftAWB(img16, AWBImg16, MainCameraCFA, ImageGainR, ImageGainB, 30); // image software Auto White Balance is done in RAW image.
     Logger::Log("Auto White Balance applied.", LogLevel::INFO, DeviceType::MAIN);
-    cv::cvtColor(AWBImg16, AWBImg16color, CV_BayerRG2BGR);
+    cv::cvtColor(AWBImg16, AWBImg16color, cv::COLOR_BayerRG2BGR);
     Logger::Log("Image converted from Bayer to BGR.", LogLevel::INFO, DeviceType::MAIN);
 
     cv::cvtColor(AWBImg16color, AWBImg16mono, cv::COLOR_BGR2GRAY);
@@ -3240,6 +3241,7 @@ bool MainWindow::indi_Driver_Confirm(QString DriverName, QString BaudRate)
     } else {
         Logger::Log("indi_Driver_Confirm | currentDeviceCode out of bounds: " + std::to_string(systemdevicelist.currentDeviceCode), LogLevel::ERROR, DeviceType::MAIN);
     }
+    return false;
 }
 
 bool MainWindow::indi_Driver_Clear()
@@ -4708,7 +4710,7 @@ void MainWindow::AfterDeviceConnect(INDI::BaseDevice *dp)
 
 bool MainWindow::hasProp(INDI::BaseDevice *dev, const char *prop)
 {
-    return dev && dev->getProperty(prop) != nullptr;
+    return dev && dev->getProperty(prop);
 }
 
 // 工具函数：检查多个属性是否存在其中之一
@@ -8077,7 +8079,14 @@ int MainWindow::CaptureImageSave()
     }
 
     QString CaptureTime = Tools::getFitsCaptureTime("/dev/shm/ccd_simulator.fits");
-    CaptureTime.replace(QRegExp("[^a-zA-Z0-9]"), "_");
+    QRegularExpression nonAlphaNumericRx("[^a-zA-Z0-9]");
+    QString tempCaptureTime = CaptureTime;
+    QRegularExpressionMatchIterator i = nonAlphaNumericRx.globalMatch(CaptureTime);
+    while (i.hasNext()) {
+        QRegularExpressionMatch match = i.next();
+        tempCaptureTime.replace(match.capturedStart(), match.capturedLength(), "_");
+    }
+    CaptureTime = tempCaptureTime;
     QString resultFileName = CaptureTime + ".fits";
 
     std::time_t currentTime = std::time(nullptr);
@@ -8209,7 +8218,14 @@ int MainWindow::solveFailedImageSave(const QString& imagePath)
         Logger::Log("solveFailedImageSave | Using current timestamp as filename: " + CaptureTime.toStdString(), LogLevel::INFO, DeviceType::MAIN);
     }
     
-    CaptureTime.replace(QRegExp("[^a-zA-Z0-9]"), "_");
+    QRegularExpression nonAlphaNumericRx("[^a-zA-Z0-9]");
+    QString tempCaptureTime = CaptureTime;
+    QRegularExpressionMatchIterator i = nonAlphaNumericRx.globalMatch(CaptureTime);
+    while (i.hasNext()) {
+        QRegularExpressionMatch match = i.next();
+        tempCaptureTime.replace(match.capturedStart(), match.capturedLength(), "_");
+    }
+    CaptureTime = tempCaptureTime;
     QString resultFileName = CaptureTime + ".fits";
     Logger::Log("solveFailedImageSave | Generated filename: " + resultFileName.toStdString(), LogLevel::INFO, DeviceType::MAIN);
 

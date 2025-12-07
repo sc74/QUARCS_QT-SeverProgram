@@ -9,6 +9,14 @@
 #include <QFileInfo>
 #include <QMutexLocker>
 
+#ifdef Const
+#undef Const
+#endif
+
+#ifdef R
+#undef R
+#endif
+
 StarSimulator::StarSimulator(QObject *parent)
     : QObject(parent)
     , m_noiseLevel(0.005) // 进一步降低默认噪声水平

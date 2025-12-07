@@ -1,6 +1,13 @@
 #ifndef MYCLIENT_H
 #define MYCLIENT_H
 
+#ifdef Const
+#undef Const
+#endif
+#ifdef R
+#undef R
+#endif
+
 #include "baseclient.h"
 #include "basedevice.h"
 

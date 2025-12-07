@@ -19,8 +19,8 @@ set(QT_COMPONENTS
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 仅使用 Qt5（去掉 Qt6）
-find_package(Qt5 REQUIRED COMPONENTS ${QT_COMPONENTS} SerialPort)
+# Use Qt6
+find_package(Qt6 REQUIRED COMPONENTS ${QT_COMPONENTS} SerialPort)
 
 find_package(OpenCV REQUIRED)
 find_package(StellarSolver REQUIRED)
@@ -57,10 +57,10 @@ install(TARGETS client
 
 target_include_directories(client PUBLIC
   /usr/include/libindi
-  /usr/local/include/libstellarsolver
+  /usr/include/libstellarsolver
 )
 
-link_directories(${PROJECT_SOURCE_DIR}/usr/lib/x86_64-linux-gnu)
+link_directories(${PROJECT_SOURCE_DIR}/usr/lib/)
 
 target_link_libraries(client PUBLIC
   -lnova
@@ -70,27 +70,29 @@ target_link_libraries(client PUBLIC
 )
 
 target_include_directories(client PUBLIC
-    /usr/local/include
+    /usr/include
 )
 
 target_link_libraries(client PRIVATE
     qhyccd
-    stellarsolver
+    stellarsolver6
 )
 
-# 这里全部固定为 Qt5::
+target_include_directories(client PRIVATE Qt::Core)
+
+# QT6 libraries link
 target_link_libraries(client PRIVATE
     ${OpenCV_LIBS}
-    Qt5::Core
-    Qt5::Gui
-    Qt5::Widgets
-    Qt5::Concurrent
-    Qt5::Network
-    Qt5::WebSockets
-    Qt5::SerialPort
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::Concurrent
+    Qt6::Network
+    Qt6::WebSockets
+    Qt6::SerialPort
     ${StellarSolver_LIBS}
 )
 
-# 复制配置文件到构建目录
+# Copy files to the compilation directory
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/../qhyccd.ini
      DESTINATION ${CMAKE_CURRENT_BINARY_DIR})

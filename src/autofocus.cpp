@@ -12,7 +12,7 @@
 #include <cmath>
 #include <algorithm>
 #include "myclient.h"  // MyClient类定义
-#include "qhyccd.h"    // QHYCCD_SUCCESS常量
+#include "libqhy/qhyccd.h"    // QHYCCD_SUCCESS常量
 #include "tools.h"   // Tools类
 #include "Logger.h"  // Logger类
 #include <stellarsolver.h> // FITSImage类来自stellarsolver

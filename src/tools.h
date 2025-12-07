@@ -1,6 +1,14 @@
 #ifndef TOOLS_HPP
 #define TOOLS_HPP
 
+#ifdef Const
+#undef Const
+#endif
+
+#ifdef R
+#undef R
+#endif
+
 #include <cstdint>
 #include <cmath>
 #include <QtCore/QtCore>
@@ -10,7 +18,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
-#include <qhyccd.h>
+#include <libqhy/qhyccd.h>
 #include <dirent.h>
 #include <cstdlib>
 #include "baseclient.h"
@@ -21,6 +29,8 @@
 #include <QObject>
 #include <QDebug>
 #include "Logger.h"
+#include <QRegularExpression>
+#include <QTransform>
 
 #include <stellarsolver.h>
 

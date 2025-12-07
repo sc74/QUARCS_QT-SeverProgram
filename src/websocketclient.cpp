@@ -3,68 +3,80 @@
 #include <QSslError>
 #include <QSslConfiguration>
 #include <QMetaObject>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QTimer>
+#include <algorithm> // Pour qMin
 
+// Constantes
+//const int WebSocketClient::maxReconnectIntervalMs;
+//const int WebSocketClient::heartbeatIntervalMs;
+//const int WebSocketClient::pongTimeoutMultiplier;
+//const int WebSocketClient::maxPendingMessages;
 
 WebSocketClient::WebSocketClient(const QUrl &httpUrl, const QUrl &httpsUrl, QObject *parent) :
-    QObject(parent), httpUrl(httpUrl), httpsUrl(httpsUrl)
+QObject(parent), httpUrl(httpUrl), httpsUrl(httpsUrl)
 {
-    // 初始化状态变量
+    // 初始化状态变量 (Initialize state variables)
     isHttpsConnected = false;
     isHttpConnected = false;
-    isNetworkConnected = networkManager.isOnline();
-    
+
+
     if (httpsUrl.isValid()) {
-        // 配置SSL
+        // 配置SSL (Configure SSL)
         QSslConfiguration sslConfig = httpsWebSocket.sslConfiguration();
-        sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);  // 禁用证书验证
+        sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);  // 禁用证书验证 (Disable certificate verification)
         httpsWebSocket.setSslConfiguration(sslConfig);
-        
+
         connect(&httpsWebSocket, &QWebSocket::connected, this, &WebSocketClient::onHttpsConnected);
         connect(&httpsWebSocket, &QWebSocket::disconnected, this, &WebSocketClient::onHttpsDisconnected);
-        connect(&httpsWebSocket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
+
+        // [QT6 CHANGEMENT] error() is remplaced by errorOccurred()
+        connect(&httpsWebSocket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::errorOccurred),
                 this, &WebSocketClient::onError);
         connect(&httpsWebSocket, &QWebSocket::sslErrors, this, &WebSocketClient::onSslErrors);
         connect(&httpsWebSocket, &QWebSocket::pong, this, &WebSocketClient::onPongReceived);
-        
+
         httpsWebSocket.open(httpsUrl);
     }
-    
+
     if (httpUrl.isValid()) {
         connect(&httpWebSocket, &QWebSocket::connected, this, &WebSocketClient::onHttpConnected);
         connect(&httpWebSocket, &QWebSocket::disconnected, this, &WebSocketClient::onHttpDisconnected);
-        connect(&httpWebSocket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
+        // [QT6 CHANGEMENT] error() is remplaced by errorOccurred()
+        connect(&httpWebSocket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::errorOccurred),
                 this, &WebSocketClient::onError);
         connect(&httpWebSocket, &QWebSocket::pong, this, &WebSocketClient::onPongReceived);
         httpWebSocket.open(httpUrl);
     }
 
-    // 初始化自动重连定时器（指数退避）
+    // 初始化自动重连定时器（指数退避） (Initialize automatic reconnect timer (exponential backoff))
     reconnectTimer.setInterval(currentReconnectIntervalMs);
     connect(&reconnectTimer, &QTimer::timeout, this, &WebSocketClient::reconnect);
 
-    // 连接网络状态变化信号槽
-    connect(&networkManager, &QNetworkConfigurationManager::onlineStateChanged, this, &WebSocketClient::onNetworkStateChanged);
-    
-    // 心跳定时器
+    // [QT6 SUPPRIMÉ] connect(&networkManager, &QNetworkConfigurationManager::onlineStateChanged, this, &WebSocketClient::onNetworkStateChanged);
+
+    // 心跳定时器 (Heartbeat timer)
     connect(&heartbeatTimer, &QTimer::timeout, this, &WebSocketClient::onHeartbeatTimeout);
     heartbeatTimer.start(heartbeatIntervalMs);
     lastPongTimer.start();
 
-    qInfo() << "WebSocketClient initialized with network state:" << (isNetworkConnected ? "ONLINE" : "OFFLINE");
+    // [QT6 NOTE] Simplified log because the overall network status is no longer checked
+    qInfo() << "WebSocketClient initialized.";
 }
 
 void WebSocketClient::onHttpsConnected()
 {
     qInfo() << "HTTPS WebSocket connected successfully";
     emit connectionStatusChanged(true, "HTTPS Connected successfully");
-    
+
     if (httpsWebSocket.isValid()) {
         connect(&httpsWebSocket, &QWebSocket::textMessageReceived,
                 this, &WebSocketClient::onTextMessageReceived);
         isHttpsConnected = true;
     }
 
-    // 修复：简化条件判断逻辑
+    // 修复：简化条件判断逻辑 (Fix: simplify conditional logic)
     if (isHttpsConnected && (httpUrl.isEmpty() || isHttpConnected)) {
         qInfo() << "All required websockets are connected";
         reconnectTimer.stop();
@@ -82,14 +94,14 @@ void WebSocketClient::onHttpsDisconnected()
     qWarning() << "HTTPS WebSocket disconnected";
     emit connectionStatusChanged(false, "HTTPS Disconnected");
 
-    // 断开接收消息的信号与槽
+    // 断开接收消息的信号与槽 (Disconnect message reception signal and slot)
     disconnect(&httpsWebSocket, &QWebSocket::textMessageReceived,
                this, &WebSocketClient::onTextMessageReceived);
 
-    // 修复：总是设置状态为false并启动重连
+    // 修复：总是设置状态为false并启动重连 (Fix: always set status to false and start reconnect)
     isHttpsConnected = false;
-    
-    // 只要配置了HTTPS URL就尝试重连
+
+    // 只要配置了HTTPS URL就尝试重连 (Only attempt reconnect if HTTPS URL is configured)
     if (httpsUrl.isValid()) {
         qInfo() << "Starting HTTPS reconnect timer...";
         if (!reconnectTimer.isActive()) {
@@ -102,14 +114,14 @@ void WebSocketClient::onHttpConnected()
 {
     qInfo() << "HTTP WebSocket connected successfully";
     emit connectionStatusChanged(true, "HTTP Connected successfully");
-    
+
     if (httpWebSocket.isValid()) {
         connect(&httpWebSocket, &QWebSocket::textMessageReceived,
                 this, &WebSocketClient::onTextMessageReceived);
         isHttpConnected = true;
     }
-    
-    // 修复：简化条件判断逻辑
+
+    // 修复：简化条件判断逻辑 (Fix: simplify conditional logic)
     if (isHttpConnected && (httpsUrl.isEmpty() || isHttpsConnected)) {
         qInfo() << "All required websockets are connected";
         reconnectTimer.stop();
@@ -127,14 +139,14 @@ void WebSocketClient::onHttpDisconnected()
     qWarning() << "HTTP WebSocket disconnected";
     emit connectionStatusChanged(false, "HTTP Disconnected");
 
-    // 断开接收消息的信号与槽
+    // 断开接收消息的信号与槽 (Disconnect message reception signal and slot)
     disconnect(&httpWebSocket, &QWebSocket::textMessageReceived,
                this, &WebSocketClient::onTextMessageReceived);
 
-    // 修复：总是设置状态为false并启动重连
+    // 修复：总是设置状态为false并启动重连 (Fix: always set status to false and start reconnect)
     isHttpConnected = false;
-    
-    // 只要配置了HTTP URL就尝试重连
+
+    // 只要配置了HTTP URL就尝试重连 (Only attempt reconnect if HTTP URL is configured)
     if (httpUrl.isValid()) {
         qInfo() << "Starting HTTP reconnect timer...";
         if (!reconnectTimer.isActive()) {
@@ -218,12 +230,12 @@ void WebSocketClient::onSslErrors(const QList<QSslError> &errors)
                 break;
         }
     }
-    
+
     qWarning() << "SSL Errors:" << errorString;
     emit connectionError("SSL错误: " + errorString);
     emit connectionStatusChanged(false, "SSL错误: " + errorString);
-    
-    // 由于我们设置了VerifyNone，这里可以继续连接
+
+    // 由于我们设置了VerifyNone，这里可以继续连接 (Since we set VerifyNone, we can continue connecting here)
     httpsWebSocket.ignoreSslErrors();
 }
 
@@ -231,133 +243,99 @@ QString WebSocketClient::getErrorString(QAbstractSocket::SocketError error)
 {
     switch (error) {
         case QAbstractSocket::ConnectionRefusedError:
-            return "连接被拒绝";
+            return "连接被拒绝"; // Connection refused
         case QAbstractSocket::RemoteHostClosedError:
-            return "远程主机关闭";
+            return "远程主机关闭"; // Remote host closed
         case QAbstractSocket::HostNotFoundError:
-            return "主机未找到";
+            return "主机未找到"; // Host not found
         case QAbstractSocket::SocketAccessError:
-            return "套接字访问错误";
+            return "套接字访问错误"; // Socket access error
         case QAbstractSocket::SocketResourceError:
-            return "套接字资源错误";
+            return "套接字资源错误"; // Socket resource error
         case QAbstractSocket::SocketTimeoutError:
-            return "套接字超时";
+            return "套接字超时"; // Socket timeout
         case QAbstractSocket::DatagramTooLargeError:
-            return "数据报文太大";
+            return "数据报文太大"; // Datagram too large
         case QAbstractSocket::NetworkError:
-            return "网络错误";
+            return "网络错误"; // Network error
         case QAbstractSocket::AddressInUseError:
-            return "地址已被使用";
+            return "地址已被使用"; // Address already in use
         case QAbstractSocket::SocketAddressNotAvailableError:
-            return "套接字地址不可用";
+            return "套接字地址不可用"; // Socket address not available
         case QAbstractSocket::UnsupportedSocketOperationError:
-            return "不支持的套接字操作";
+            return "不支持的套接字操作"; // Unsupported socket operation
         case QAbstractSocket::UnknownSocketError:
-            return "未知套接字错误";
+            return "未知套接字错误"; // Unknown socket error
         case QAbstractSocket::TemporaryError:
-            return "临时错误";
+            return "临时错误"; // Temporary error
         case QAbstractSocket::SslHandshakeFailedError:
-            return "SSL握手失败";
+            return "SSL握手失败"; // SSL handshake failed
         default:
-            return "未知错误 (错误码: " + QString::number(error) + ")";
+            return "未知错误 (错误码: " + QString::number(error) + ")"; // Unknown error (code: ...)
     }
 }
 
 void WebSocketClient::reconnect()
 {
     qInfo() << "Attempting to reconnect WebSockets...";
-    
-    // 检查网络状态
-    if (!isNetworkConnected) {
-        qWarning() << "Network is offline, skipping reconnect attempt";
-        return;
-    }
-    
-    // 重连HTTPS WebSocket
+
+    // [QT6 REMOVED] The global network status check has been removed.
+    // if (!isNetworkConnected) {
+    //     qWarning() << "Network is offline, skipping reconnect attempt";
+    //     return;
+    // }
+
+    // 重连HTTPS WebSocket (Reconnect HTTPS WebSocket)
     if (httpsUrl.isValid() && !isHttpsConnected) {
         qInfo() << "Reconnecting to HTTPS WebSocket server...";
-        
-        // 确保先断开现有连接
+
+        // 确保先断开现有连接 (Ensure existing connection is closed first)
         if (httpsWebSocket.state() != QAbstractSocket::UnconnectedState) {
             httpsWebSocket.close();
         }
-        
-        // 等待完全断开后重新连接
+
+        // 等待完全断开后重新连接 (Wait for full disconnection before reconnecting)
         QTimer::singleShot(100, [this]() {
             httpsWebSocket.open(httpsUrl);
         });
     }
-    
-    // 重连HTTP WebSocket
+
+    // 重连HTTP WebSocket (Reconnect HTTP WebSocket)
     if (httpUrl.isValid() && !isHttpConnected) {
         qInfo() << "Reconnecting to HTTP WebSocket server...";
-        
-        // 确保先断开现有连接
+
+        // 确保先断开现有连接 (Ensure existing connection is closed first)
         if (httpWebSocket.state() != QAbstractSocket::UnconnectedState) {
             httpWebSocket.close();
         }
-        
-        // 等待完全断开后重新连接
+
+        // 等待完全断开后重新连接 (Wait for full disconnection before reconnecting)
         QTimer::singleShot(100, [this]() {
             httpWebSocket.open(httpUrl);
         });
     }
-    
-    // 如果两个连接都已连接，停止重连定时器
-    if ((!httpsUrl.isValid() || isHttpsConnected) && 
+
+    // 如果两个连接都已连接，停止重连定时器 (If both connections are established, stop reconnect timer)
+    if ((!httpsUrl.isValid() || isHttpsConnected) &&
         (!httpUrl.isValid() || isHttpConnected)) {
         qInfo() << "All connections established, stopping reconnect timer";
-        reconnectTimer.stop();
-        reconnectAttempts = 0;
-        currentReconnectIntervalMs = 1000;
-        missedPongs = 0;
-        lastPongTimer.restart();
-        flushPending();
-        return;
-    }
+    reconnectTimer.stop();
+    reconnectAttempts = 0;
+    currentReconnectIntervalMs = 1000;
+    missedPongs = 0;
+    lastPongTimer.restart();
+    flushPending();
+    return;
+        }
 
-    // 增加退避并更新重连频率
-    reconnectAttempts++;
-    currentReconnectIntervalMs = qMin(currentReconnectIntervalMs * 2, maxReconnectIntervalMs);
-    reconnectTimer.setInterval(currentReconnectIntervalMs);
+        // 增加退避并更新重连频率 (Increase backoff and update reconnect frequency)
+        reconnectAttempts++;
+        currentReconnectIntervalMs = qMin(currentReconnectIntervalMs * 2, maxReconnectIntervalMs);
+        reconnectTimer.setInterval(currentReconnectIntervalMs);
 }
 
-void WebSocketClient::onNetworkStateChanged(bool isOnline)
-{
-    qInfo() << "Network state changed to:" << (isOnline ? "ONLINE" : "OFFLINE");
-    isNetworkConnected = isOnline;
-    
-    if (isOnline) {
-        // 网络恢复时检查连接状态并启动重连
-        bool needReconnect = false;
-        
-        if (httpsUrl.isValid() && !isHttpsConnected) {
-            qInfo() << "HTTPS connection lost, will attempt reconnect";
-            needReconnect = true;
-        }
-        
-        if (httpUrl.isValid() && !isHttpConnected) {
-            qInfo() << "HTTP connection lost, will attempt reconnect";
-            needReconnect = true;
-        }
-        
-        if (needReconnect) {
-            // 立即尝试重连一次
-            QTimer::singleShot(1000, this, &WebSocketClient::reconnect);
-            
-            // 启动定时重连
-            if (!reconnectTimer.isActive()) {
-                reconnectTimer.start();
-            }
-        }
-    } else {
-        // 网络断开时停止重连尝试
-        if (reconnectTimer.isActive()) {
-            qInfo() << "Network offline, stopping reconnect timer";
-            reconnectTimer.stop();
-        }
-    }
-}
+// [QT6 REMOVED] The onNetworkStateChanged function has been removed because QNetworkConfigurationManager no longer exists.
+// The restart logic is now handled by the reconnectTimer and disconnection signals.
 
 void WebSocketClient::onTextMessageReceived(QString message)
 {
@@ -366,12 +344,12 @@ void WebSocketClient::onTextMessageReceived(QString message)
     QJsonObject messageObj = doc.object();
     if (messageObj["type"].toString() == "Vue_Command" || messageObj["type"].toString() == "Process_Command" )
     {
-        // 处理命令
+        // 处理命令 (Process command)
         emit messageReceived(messageObj["message"].toString());
-        
+
         // qDebug() << "Message received:" << messageObj["type"].toString() << " " << messageObj["message"].toString();
 
-        // 发送确认消息
+        // 发送确认消息 (Send acknowledgment message)
         sendAcknowledgment(messageObj["msgid"].toString());
     }
     else if (messageObj["type"].toString() == "Server_msg")
@@ -389,7 +367,7 @@ void WebSocketClient::onTextMessageReceived(QString message)
         QString AppVersion = messageObj["appversion"].toString();
         QString info = "localMessage:" + lat + ":" + lon + ":" + language + ":" + wifiName + ":" + AppVersion;
         emit messageReceived(info);
-        // qDebug() << "发送app信息 received:" << info;
+        // qDebug() << "发送app信息 received:" << info; // Send app info received
     }
     else
     {
@@ -399,13 +377,13 @@ void WebSocketClient::onTextMessageReceived(QString message)
 
 void WebSocketClient::sendAcknowledgment(QString messageID)
 {
-    QString utf8Message = messageID.toUtf8();
-
     QJsonObject messageObj;
 
     messageObj["type"] = "QT_Confirm";
-    messageObj["msgid"] = utf8Message;
-    QByteArray payload = QJsonDocument(messageObj).toJson();
+    // [QT6 NOTE] It is more idiomatic to use QString directly in QJsonObject.
+    messageObj["msgid"] = messageID;
+    QByteArray payload = QJsonDocument(messageObj).toJson(QJsonDocument::Compact); // Compact to minimize size
+
     if (!isHttpsConnected && !isHttpConnected) {
         if (pendingMessages.size() >= maxPendingMessages) pendingMessages.dequeue();
         pendingMessages.enqueue(payload);
@@ -417,12 +395,10 @@ void WebSocketClient::sendAcknowledgment(QString messageID)
 
 void WebSocketClient::sendProcessCommandReturn(QString message)
 {
-    QString utf8Message = message.toUtf8();
-
     QJsonObject messageObj;
     messageObj["type"] = "Process_Command_Return";
-    messageObj["message"] = utf8Message;
-    QByteArray payload = QJsonDocument(messageObj).toJson();
+    messageObj["message"] = message;
+    QByteArray payload = QJsonDocument(messageObj).toJson(QJsonDocument::Compact);
     if (!isHttpsConnected && !isHttpConnected) {
         if (pendingMessages.size() >= maxPendingMessages) pendingMessages.dequeue();
         pendingMessages.enqueue(payload);
@@ -434,13 +410,11 @@ void WebSocketClient::sendProcessCommandReturn(QString message)
 
 void WebSocketClient::messageSend(QString message)
 {
-    QString utf8Message = message.toUtf8(); // 将QString转换为UTF-8编码的QString
-
     QJsonObject messageObj;
 
-    messageObj["message"] = utf8Message;
+    messageObj["message"] = message;
     messageObj["type"] = "QT_Return";
-    QByteArray payload = QJsonDocument(messageObj).toJson();
+    QByteArray payload = QJsonDocument(messageObj).toJson(QJsonDocument::Compact);
     if (!isHttpsConnected && !isHttpConnected) {
         if (pendingMessages.size() >= maxPendingMessages) pendingMessages.dequeue();
         pendingMessages.enqueue(payload);
@@ -452,19 +426,19 @@ void WebSocketClient::messageSend(QString message)
 
 void WebSocketClient::onHeartbeatTimeout()
 {
-    // 仅在至少一个连接可用时发送 ping
+    // 仅在至少一个连接可用时发送 ping (Only send ping if at least one connection is available)
     bool anyConnected = (isHttpsConnected && httpsWebSocket.state() == QAbstractSocket::ConnectedState) ||
-                        (isHttpConnected && httpWebSocket.state() == QAbstractSocket::ConnectedState);
+    (isHttpConnected && httpWebSocket.state() == QAbstractSocket::ConnectedState);
     if (anyConnected) {
         if (isHttpsConnected) httpsWebSocket.ping("h");
         if (isHttpConnected) httpWebSocket.ping("h");
 
-        // 判定是否长时间未收到PONG
+        // 判定是否长时间未收到PONG (Determine if PONG has not been received for a long time)
         if (lastPongTimer.isValid() && lastPongTimer.elapsed() > heartbeatIntervalMs * pongTimeoutMultiplier) {
             missedPongs++;
             qWarning() << "Missed pong #" << missedPongs << ", forcing reconnect if threshold exceeded";
             if (missedPongs >= 2) {
-                // 强制重连
+                // 强制重连 (Force reconnect)
                 if (isHttpsConnected) httpsWebSocket.close();
                 if (isHttpConnected) httpWebSocket.close();
                 if (!reconnectTimer.isActive()) reconnectTimer.start();
@@ -496,8 +470,8 @@ void WebSocketClient::stop()
 {
     if (reconnectTimer.isActive()) reconnectTimer.stop();
     if (heartbeatTimer.isActive()) heartbeatTimer.stop();
-    disconnect(&httpsWebSocket, nullptr, this, nullptr);
-    disconnect(&httpWebSocket, nullptr, this, nullptr);
+    // Disconnect all slots associated with this object
+    disconnect(this, nullptr, nullptr, nullptr);
     if (httpsWebSocket.state() != QAbstractSocket::UnconnectedState) httpsWebSocket.close();
     if (httpWebSocket.state() != QAbstractSocket::UnconnectedState) httpWebSocket.close();
 }
