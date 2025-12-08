@@ -118,9 +118,8 @@ MainWindow::MainWindow(QObject *parent) : QObject(parent)
 
     m_thread = new QThread;
     m_threadTimer = new QTimer;
-    m_threadTimer->setInterval(10);
+    m_threadTimer->setInterval(200);
     m_threadTimer->moveToThread(m_thread);
-    connect(m_thread, &QThread::started, m_threadTimer, qOverload<>(&QTimer::start));
     connect(m_threadTimer, &QTimer::timeout, this, &MainWindow::onTimeout);
     connect(m_thread, &QThread::finished, m_threadTimer, &QTimer::stop);
     connect(m_thread, &QThread::destroyed, m_threadTimer, &QTimer::deleteLater);
@@ -128,9 +127,8 @@ MainWindow::MainWindow(QObject *parent) : QObject(parent)
 
     PHDControlGuide_thread = new QThread;
     PHDControlGuide_threadTimer = new QTimer;
-    PHDControlGuide_threadTimer->setInterval(5);
+    PHDControlGuide_threadTimer->setInterval(200);
     PHDControlGuide_threadTimer->moveToThread(PHDControlGuide_thread);
-    connect(PHDControlGuide_thread, &QThread::started, PHDControlGuide_threadTimer, qOverload<>(&QTimer::start));
     connect(PHDControlGuide_threadTimer, &QTimer::timeout, this, &MainWindow::onPHDControlGuideTimeout);
     connect(PHDControlGuide_thread, &QThread::finished, PHDControlGuide_threadTimer, &QTimer::stop);
     connect(PHDControlGuide_thread, &QThread::destroyed, PHDControlGuide_threadTimer, &QTimer::deleteLater);
@@ -424,6 +422,17 @@ void MainWindow::onMessageReceived(const QString &message)
             autofocusBacklashCompensation = Backlash;
         }
     }
+    else if (parts.size() == 2 && parts[0].trimmed() == "Coarse Step Divisions")
+    {
+        Logger::Log("Coarse Step Divisions:" + parts[1].trimmed().toStdString(), LogLevel::DEBUG, DeviceType::MAIN);
+        int divisions = parts[1].trimmed().toInt();
+        if (divisions <= 0)
+        {
+            divisions = 10;
+        }
+        autoFocusCoarseDivisions = divisions;
+        Tools::saveParameter("Focuser", "coarseStepDivisions", QString::number(divisions));
+    }
     else if (parts.size() == 2 && parts[0].trimmed() == "AutoFocus Exposure Time (ms)")
     {
         QString valueStr = parts[1].trimmed();
@@ -475,12 +484,14 @@ void MainWindow::onMessageReceived(const QString &message)
 
         if (mode.isEmpty() || mode == "Yes" || mode == "Coarse") {
             // 完整自动对焦流程：粗调 + 精调 + super-fine
-            emit wsThread->sendMessageToClient("AutoFocusStarted:自动对焦已开始");
+            // 增加模式标记：full，便于前端区分不同自动对焦模式的 UI 行为
+            emit wsThread->sendMessageToClient("AutoFocusStarted:full:自动对焦已开始");
             startAutoFocus();
         }
         else if (mode == "Fine") {
             // 新：仅从当前位置执行 HFR 精调（固定步长 100，采样 11 点）
-            emit wsThread->sendMessageToClient("AutoFocusStarted:自动对焦已开始");
+            // 增加模式标记：fine（仅精调模式）
+            emit wsThread->sendMessageToClient("AutoFocusStarted:fine:自动对焦已开始");
             startAutoFocusFineHFROnly();
         }
         else { // No 或未知模式，视为取消
@@ -1080,6 +1091,10 @@ void MainWindow::onMessageReceived(const QString &message)
         Logger::Log("GuiderSwitch ...", LogLevel::INFO, DeviceType::GUIDER);
         if (isGuiding && parts[1].trimmed() == "false")
         {
+            // 关闭导星：停止高频定时器，减少空闲状态 CPU 占用
+            QMetaObject::invokeMethod(m_threadTimer, "stop", Qt::QueuedConnection);
+            QMetaObject::invokeMethod(PHDControlGuide_threadTimer, "stop", Qt::QueuedConnection);
+
             isGuiding = false;
             call_phd_StopLooping();
             emit wsThread->sendMessageToClient("GuiderSwitchStatus:false");
@@ -1091,6 +1106,10 @@ void MainWindow::onMessageReceived(const QString &message)
         }
         else if (!isGuiding && parts[1].trimmed() == "true")
         {
+            // 打开导星：启动高频定时器，由共享内存数据驱动 UI 和控制读取
+            QMetaObject::invokeMethod(m_threadTimer, "start", Qt::QueuedConnection);
+            QMetaObject::invokeMethod(PHDControlGuide_threadTimer, "start", Qt::QueuedConnection);
+
             isGuiding = true;
             emit wsThread->sendMessageToClient("GuiderSwitchStatus:true");
             if (ClearCalibrationData)
@@ -1133,6 +1152,10 @@ void MainWindow::onMessageReceived(const QString &message)
         {
             if (isGuiderLoopExp && parts[1].trimmed() == "false")
             {
+                // 关闭循环曝光：停止高频定时器
+                QMetaObject::invokeMethod(m_threadTimer, "stop", Qt::QueuedConnection);
+                QMetaObject::invokeMethod(PHDControlGuide_threadTimer, "stop", Qt::QueuedConnection);
+
                 Logger::Log("Stop GuiderLoopExp ...", LogLevel::INFO, DeviceType::GUIDER);
                 isGuiderLoopExp = false;
                 isGuiding = false;
@@ -1145,6 +1168,10 @@ void MainWindow::onMessageReceived(const QString &message)
             {
                 Logger::Log("Start GuiderLoopExp ...", LogLevel::INFO, DeviceType::GUIDER);
                 isGuiderLoopExp = true;
+                // 开启循环曝光：启动高频定时器
+                QMetaObject::invokeMethod(m_threadTimer, "start", Qt::QueuedConnection);
+                QMetaObject::invokeMethod(PHDControlGuide_threadTimer, "start", Qt::QueuedConnection);
+
                 emit wsThread->sendMessageToClient("GuiderLoopExpStatus:true");
                 emit wsThread->sendMessageToClient("GuiderUpdateStatus:1");
                 call_phd_StartLooping();
@@ -1176,6 +1203,11 @@ void MainWindow::onMessageReceived(const QString &message)
         Logger::Log("PHD2Recalibrate ...", LogLevel::DEBUG, DeviceType::GUIDER);
         call_phd_ClearCalibration();
         call_phd_StartLooping();
+
+        // 重新标定也会开启循环曝光，这里确保高频定时器已启动
+        QMetaObject::invokeMethod(m_threadTimer, "start", Qt::QueuedConnection);
+        QMetaObject::invokeMethod(PHDControlGuide_threadTimer, "start", Qt::QueuedConnection);
+
         sleep(1);
 
         call_phd_AutoFindStar();
@@ -4270,7 +4302,7 @@ void MainWindow::AfterDeviceConnect()
         // 获取驱动版本号
         QString MountSDKVersion = "null";
         indi_Client->getMountInfo(dpMount, MountSDKVersion);
-        emit wsThread->sendMessageToClient("getMountInfo:Mount:" + MountSDKVersion);
+        emit wsThread->sendMessageToClient("getMountInfo:" + MountSDKVersion);
         Logger::Log("Mount Info: " + MountSDKVersion.toStdString(), LogLevel::INFO, DeviceType::MAIN);
 
         // indi_Client->setTelescopeHomeInit(dpMount, "SYNCHOME");
@@ -4597,7 +4629,7 @@ void MainWindow::AfterDeviceConnect(INDI::BaseDevice *dp)
         // 获取驱动版本号
         QString MountSDKVersion = "null";
         indi_Client->getMountInfo(dpMount, MountSDKVersion);
-        emit wsThread->sendMessageToClient("getMountInfo:Mount:" + MountSDKVersion);
+        emit wsThread->sendMessageToClient("getMountInfo:" + MountSDKVersion);
         Logger::Log("Mount Info: " + MountSDKVersion.toStdString(), LogLevel::INFO, DeviceType::MAIN);
 
         // 设置home位置
@@ -5357,7 +5389,8 @@ uint32_t MainWindow::call_phd_StartLooping(void)
 
     while (sharedmemory_phd[0] == 0x01 && t.elapsed() < 500)
     {
-        // QCoreApplication::processEvents();
+        // 避免忙等占满 CPU，增加适度休眠
+        QThread::msleep(100);
     }
     if (t.elapsed() >= 500)
     {
@@ -5399,7 +5432,8 @@ uint32_t MainWindow::call_phd_StopLooping(void)
 
     while (sharedmemory_phd[0] == 0x01 && t.elapsed() < 500)
     {
-        // QCoreApplication::processEvents();
+        // 避免忙等占满 CPU，增加适度休眠
+        QThread::msleep(100);
     }
     if (t.elapsed() >= 500)
     {
@@ -11910,6 +11944,7 @@ QPointF MainWindow::selectStar(QList<FITSImage::Star> stars){
     // 1) 边界与输入检查
     if (stars.size() <= 0) {
         Logger::Log("selectStar | no stars", LogLevel::INFO, DeviceType::FOCUSER);
+        roiAndFocuserInfo["SelectStarHFR"] = 0.0;
         return QPointF(CurrentPosition, 0);
     }
 
@@ -12070,6 +12105,7 @@ void MainWindow::startAutoFocus()
     }
     autoFocus->setFocuserMinPosition(focuserMinPosition);
     autoFocus->setFocuserMaxPosition(focuserMaxPosition);
+    autoFocus->setCoarseDivisionCount(autoFocusCoarseDivisions);
     autoFocus->setDefaultExposureTime(autoFocusExposureTime); // 自动对焦曝光时间（仅作用于自动对焦）
     autoFocus->setUseVirtualData(false);      // 使用虚拟数据
     
@@ -12231,6 +12267,17 @@ void MainWindow::startAutoFocus()
         emit wsThread->sendMessageToClient(QString("AutoFocusStepChanged:%1:%2").arg(step).arg(description));
     }));
 
+  // 连接自动对焦拍摄进度信号：将各阶段拍摄进度转发到前端
+  autoFocusConnections.push_back(connect(autoFocus, &AutoFocus::captureProgressChanged,
+                                         this, [this](const QString &stage, int current, int total)
+                                         {
+    Logger::Log(QString("自动对焦拍摄进度: 阶段=%1, 当前=%2, 总数=%3")
+                .arg(stage).arg(current).arg(total).toStdString(),
+                LogLevel::INFO, DeviceType::FOCUSER);
+    emit wsThread->sendMessageToClient(
+          QString("AutoFocusCaptureProgress:%1:%2:%3").arg(stage).arg(current).arg(total));
+  }));
+
     // 连接自动对焦完成信号
     autoFocusConnections.push_back(connect(autoFocus, &AutoFocus::autoFocusCompleted, this, [this](bool success, double bestPosition, double minHFR)
             {
@@ -12334,6 +12381,7 @@ void MainWindow::startAutoFocusFineHFROnly()
     // 与常规自动对焦保持一致的参数配置
     autoFocus->setFocuserMinPosition(focuserMinPosition);
     autoFocus->setFocuserMaxPosition(focuserMaxPosition);
+    autoFocus->setCoarseDivisionCount(autoFocusCoarseDivisions);
     autoFocus->setDefaultExposureTime(autoFocusExposureTime); // 自动对焦曝光时间（仅作用于自动对焦）
     autoFocus->setUseVirtualData(false);      // 使用实时数据
 
@@ -12531,6 +12579,7 @@ void MainWindow::startAutoFocusSuperFineOnly()
     // 与常规自动对焦保持一致的参数配置
     autoFocus->setFocuserMinPosition(focuserMinPosition);
     autoFocus->setFocuserMaxPosition(focuserMaxPosition);
+    autoFocus->setCoarseDivisionCount(autoFocusCoarseDivisions);
     autoFocus->setDefaultExposureTime(autoFocusExposureTime); // 自动对焦曝光时间（仅作用于自动对焦）
     autoFocus->setUseVirtualData(false);      // 使用虚拟数据
 
@@ -13471,6 +13520,15 @@ void MainWindow::getFocuserParameters()
     int emptyStep = parameters.contains("Backlash") ? parameters["Backlash"].toInt() : 0;
     autofocusBacklashCompensation = emptyStep;
     emit wsThread->sendMessageToClient("Backlash:" + QString::number(emptyStep));
+    
+    // 粗调分段数（总行程 / 分段数）
+    int coarseDivisions = parameters.contains("coarseStepDivisions") ? parameters["coarseStepDivisions"].toInt() : 10;
+    if (coarseDivisions <= 0)
+    {
+        coarseDivisions = 10;
+    }
+    autoFocusCoarseDivisions = coarseDivisions;
+    emit wsThread->sendMessageToClient("Coarse Step Divisions:" + QString::number(autoFocusCoarseDivisions));
 
 }
 
