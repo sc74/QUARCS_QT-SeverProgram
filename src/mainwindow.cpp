@@ -123,6 +123,7 @@ MainWindow::MainWindow(QObject *parent) : QObject(parent)
     connect(m_threadTimer, &QTimer::timeout, this, &MainWindow::onTimeout);
     connect(m_thread, &QThread::finished, m_threadTimer, &QTimer::stop);
     connect(m_thread, &QThread::destroyed, m_threadTimer, &QTimer::deleteLater);
+    connect(m_thread, &QThread::started, m_threadTimer, QOverload<>::of(&QTimer::start));
     m_thread->start();
 
     PHDControlGuide_thread = new QThread;
@@ -132,6 +133,7 @@ MainWindow::MainWindow(QObject *parent) : QObject(parent)
     connect(PHDControlGuide_threadTimer, &QTimer::timeout, this, &MainWindow::onPHDControlGuideTimeout);
     connect(PHDControlGuide_thread, &QThread::finished, PHDControlGuide_threadTimer, &QTimer::stop);
     connect(PHDControlGuide_thread, &QThread::destroyed, PHDControlGuide_threadTimer, &QTimer::deleteLater);
+    connect(PHDControlGuide_thread, &QThread::started, PHDControlGuide_threadTimer, QOverload<>::of(&QTimer::start)); // 新增
     PHDControlGuide_thread->start();
     // getConnectedSerialPorts();
 
@@ -762,7 +764,31 @@ void MainWindow::onMessageReceived(const QString &message)
         MainCameraCFA = parts[1].trimmed();
         Logger::Log("ImageCFA is set to " + MainCameraCFA.toStdString(), LogLevel::DEBUG, DeviceType::MAIN);
         Tools::saveParameter("MainCamera", "ImageCFA", parts[1].trimmed());
-    }else if (parts.size() == 2 && parts[0].trimmed() == "Self Exposure Time (ms)")
+    }
+    else if (parts.size() == 3 && parts[0].trimmed() == "SetSerialPort")
+    {
+        // 手动设置串口路径，仅针对 Mount / Focuser
+        QString devType = parts[1].trimmed();
+        QString portPath = parts[2].trimmed();
+        Logger::Log("SetSerialPort | " + devType.toStdString() + " -> " + portPath.toStdString(), LogLevel::INFO, DeviceType::MAIN);
+
+        if (devType == "Mount" || devType == "Focuser")
+        {
+            // 保存到配置文件，供下次启动或重连时使用
+            Tools::saveParameter(devType, "SerialPort", portPath);
+
+            // 若设备已存在，则立即更新其串口端口
+            if (devType == "Mount" && dpMount != nullptr)
+            {
+                indi_Client->setDevicePort(dpMount, portPath);
+            }
+            else if (devType == "Focuser" && dpFocuser != nullptr)
+            {
+                indi_Client->setDevicePort(dpFocuser, portPath);
+            }
+        }
+    }
+    else if (parts.size() == 2 && parts[0].trimmed() == "Self Exposure Time (ms)")
     {
         Logger::Log("Self Exposure Time (ms) is set to " + parts[1].trimmed().toStdString(), LogLevel::DEBUG, DeviceType::MAIN);
         Tools::saveParameter("MainCamera", "SelfExposureTime(ms)", parts[1].trimmed());
@@ -1091,9 +1117,6 @@ void MainWindow::onMessageReceived(const QString &message)
         Logger::Log("GuiderSwitch ...", LogLevel::INFO, DeviceType::GUIDER);
         if (isGuiding && parts[1].trimmed() == "false")
         {
-            // 关闭导星：停止高频定时器，减少空闲状态 CPU 占用
-            QMetaObject::invokeMethod(m_threadTimer, "stop", Qt::QueuedConnection);
-            QMetaObject::invokeMethod(PHDControlGuide_threadTimer, "stop", Qt::QueuedConnection);
 
             isGuiding = false;
             call_phd_StopLooping();
@@ -1106,9 +1129,6 @@ void MainWindow::onMessageReceived(const QString &message)
         }
         else if (!isGuiding && parts[1].trimmed() == "true")
         {
-            // 打开导星：启动高频定时器，由共享内存数据驱动 UI 和控制读取
-            QMetaObject::invokeMethod(m_threadTimer, "start", Qt::QueuedConnection);
-            QMetaObject::invokeMethod(PHDControlGuide_threadTimer, "start", Qt::QueuedConnection);
 
             isGuiding = true;
             emit wsThread->sendMessageToClient("GuiderSwitchStatus:true");
@@ -1885,9 +1905,21 @@ void MainWindow::onMessageReceived(const QString &message)
         {
             Logger::Log("ResetAutoPolarAlignment: polarAlignment is nullptr", LogLevel::WARNING, DeviceType::MAIN);
         }
+
         bool isSuccess = initPolarAlignment();
         if (isSuccess)
         {
+            // 启动自动极轴校准前，先关闭赤道仪跟踪
+            bool trackingDisabled = false;
+            if (indi_Client != nullptr && dpMount != nullptr)
+            {
+                indi_Client->setTelescopeTrackEnable(dpMount, false);
+                emit wsThread->sendMessageToClient("TelescopeTrack:OFF");
+                Logger::Log("StartAutoPolarAlignment: Telescope tracking disabled for polar alignment",
+                            LogLevel::INFO, DeviceType::MAIN);
+                trackingDisabled = true;
+            }
+
             if (polarAlignment->startPolarAlignment())
             {
                 Logger::Log("StartAutoPolarAlignment: Started successfully", LogLevel::INFO, DeviceType::MAIN);
@@ -1896,6 +1928,19 @@ void MainWindow::onMessageReceived(const QString &message)
             {
                 Logger::Log("StartAutoPolarAlignment: Failed to start polar alignment", LogLevel::ERROR, DeviceType::MAIN);
                 emit wsThread->sendMessageToClient("StartAutoPolarAlignmentStatus:false:Failed to start polar alignment");
+
+                // 启动失败时恢复之前的跟踪状态
+                if (trackingDisabled && indi_Client != nullptr && dpMount != nullptr)
+                {
+                    indi_Client->setTelescopeTrackEnable(dpMount, true);
+
+                    bool isTrack = false;
+                    indi_Client->getTelescopeTrackEnable(dpMount, isTrack);
+                    emit wsThread->sendMessageToClient(isTrack ? "TelescopeTrack:ON"
+                                                               : "TelescopeTrack:OFF");
+                    Logger::Log("StartAutoPolarAlignment: Restore telescope tracking because start failed",
+                                LogLevel::INFO, DeviceType::MAIN);
+                }
             }
         }
         else
@@ -2358,7 +2403,7 @@ void MainWindow::onTimeout()
     {
         if (dpMount->isConnected())
         {
-            if (mountDisplayCounter >= 200)
+            if (mountDisplayCounter >= 5)
             {
                 double RA_HOURS, DEC_DEGREE;
                 indi_Client->getTelescopeRADECJNOW(dpMount, RA_HOURS, DEC_DEGREE);
@@ -2460,7 +2505,7 @@ void MainWindow::onTimeout()
     MainCameraStatusCounter++;
     if (dpMainCamera != NULL)
     {
-        if (MainCameraStatusCounter >= 100)
+        if (MainCameraStatusCounter >= 5)
         {
             emit wsThread->sendMessageToClient("MainCameraStatus:" + glMainCameraStatu);
             MainCameraStatusCounter = 0;
@@ -10689,8 +10734,22 @@ void MainWindow::ConnectDriver(QString DriverName, QString DriverType)
                     if (connectState)
                     {
                         connectedDeviceIdList.push_back(i);
-                    }else{
+                    }
+                    else
+                    {
                         Logger::Log("ConnectDriver | Device (" + std::string(indi_Client->GetDeviceNameFromList(i).c_str()) + ") is not connected,try to update port", LogLevel::WARNING, DeviceType::MAIN);
+
+                        // 若为 Mount/Focuser 串口设备，并且尚未保存串口路径，则提示前端弹出串口选择界面
+                        if (DriverType == "Mount" || DriverType == "Focuser")
+                        {
+                            QMap<QString, QString> parameters = Tools::readParameters(DriverType);
+                            if (!parameters.contains("SerialPort") || parameters.value("SerialPort").isEmpty())
+                            {
+                                sendSerialPortOptions(DriverType);
+                                emit wsThread->sendMessageToClient("RequestSerialPortSelection:" + DriverType);
+                            }
+                        }
+
                         emit wsThread->sendMessageToClient("deleteDeviceAllocationList:" + QString::fromUtf8(indi_Client->GetDeviceNameFromList(i).c_str()));
                         indi_Client->disconnectDevice(indi_Client->GetDeviceNameFromList(i).c_str());
                         Logger::Log("ConnectDriver | Device (" + std::string(indi_Client->GetDeviceNameFromList(i).c_str()) + ") is not exist", LogLevel::WARNING, DeviceType::MAIN);
@@ -11365,13 +11424,9 @@ QStringList MainWindow::getConnectedSerialPorts()
     const auto infos = QSerialPortInfo::availablePorts();
     for (const QSerialPortInfo &info : infos)
     {
-        QSerialPort serial;
-        serial.setPort(info);
-        if (serial.open(QIODevice::ReadWrite))
-        { // 尝试以读写方式打开串口
-            activeSerialPortNames.append(info.portName());
-            serial.close(); // 关闭串口
-        }
+        // 使用系统路径，便于直接设置到 INDI 设备端口，例如 /dev/ttyUSB0
+        // 不再强制尝试打开端口，以免过滤掉权限/占用导致暂时无法打开但仍可被用户选择的端口
+        activeSerialPortNames.append(info.systemLocation());
     }
     return activeSerialPortNames;
 }
@@ -11390,6 +11445,52 @@ QString MainWindow::resolveSerialPort(const QString &symbolicLink)
         Logger::Log("ResolveSerialPort | provided path is not a symbolic link", LogLevel::WARNING, DeviceType::MAIN);
         return QString();
     }
+}
+
+void MainWindow::sendSerialPortOptions(const QString &driverType)
+{
+    if (!wsThread)
+        return;
+
+    // 仅支持 Mount / Focuser 两类串口设备
+    if (driverType != "Mount" && driverType != "Focuser")
+        return;
+
+    // 当前可用串口路径列表
+    QStringList ports = getConnectedSerialPorts();
+
+    // 已保存的串口路径（来自 config/config.ini）
+    QMap<QString, QString> parameters = Tools::readParameters(driverType);
+    QString savedPort = parameters.contains("SerialPort") ? parameters.value("SerialPort") : QString();
+
+    // 若已保存串口不在当前可用列表中，也插入进去，保证下拉中能选到
+    if (!savedPort.isEmpty() && !ports.contains(savedPort))
+    {
+        ports.prepend(savedPort);
+    }
+
+    // 组装带“真实路径 -> 友好名称(by-id)”的项：
+    // 每一项格式为：<portPath>-><displayName>，前端再解析
+    QString payload = "SerialPortOptions:" + driverType + ":" + savedPort;
+    for (const QString &p : ports)
+    {
+        QString displayName = p;
+        QFileInfo fi(p);
+        QString ttyName = fi.fileName(); // 例如 ttyUSB0
+
+        // 若能找到 /dev/serial/by-id 的符号链接，则使用其文件名作为显示名
+        QStringList byIdLinks = getByIdLinksForTty(ttyName);
+        if (!byIdLinks.isEmpty())
+        {
+            QFileInfo linkInfo(byIdLinks.first());
+            displayName = linkInfo.fileName(); // 只显示 by-id 的名字，更易识别设备
+        }
+
+        payload += ":" + p + "->" + displayName;
+    }
+
+    Logger::Log("sendSerialPortOptions | " + payload.toStdString(), LogLevel::DEBUG, DeviceType::MAIN);
+    emit wsThread->sendMessageToClient(payload);
 }
 
 QStringList MainWindow::findLinkToTtyDevice(const QString &directoryPath, const QString &ttyDevice)
@@ -11535,6 +11636,17 @@ void MainWindow::disconnectDevice(const QString &deviceName, const QString &desc
             Logger::Log(deviceName.toStdString() + " disconnected successfully.", LogLevel::INFO, DeviceType::MAIN);
             emit wsThread->sendMessageToClient("DisconnectDriverSuccess:" + description);
             emit wsThread->sendMessageToClient("deleteDeviceAllocationList:" + deviceName);
+
+            // 若为赤道仪或电调，并且尚未保存串口路径，则在断开后提示前端弹出串口选择 UI
+            if (description == "Mount" || description == "Focuser")
+            {
+                QMap<QString, QString> parameters = Tools::readParameters(description);
+                if (!parameters.contains("SerialPort") || parameters.value("SerialPort").isEmpty())
+                {
+                    sendSerialPortOptions(description);
+                    emit wsThread->sendMessageToClient("RequestSerialPortSelection:" + description);
+                }
+            }
             break;
         }
     }
@@ -12545,7 +12657,8 @@ void MainWindow::startAutoFocusFineHFROnly()
         }
     }));
 
-    autoFocus->startFineHFRFromCurrentPosition();
+    // 仅精调(Fine)：从当前位置直接进入 super-fine 精调流程
+    autoFocus->startSuperFineFromCurrentPosition();
     isAutoFocus = true;
     autoFocusStep = 0;
 }
@@ -12972,6 +13085,10 @@ void MainWindow::getMountParameters()
         }
         emit wsThread->sendMessageToClient(it.key() + ":" + it.value());
     }
+
+    // 将当前 Mount 串口列表与已保存串口下发给前端（若无保存则 savedPort 为空）
+    sendSerialPortOptions("Mount");
+
     Logger::Log("getMountParameters finish!", LogLevel::DEBUG, DeviceType::MAIN);
 }
 
@@ -13179,6 +13296,27 @@ bool MainWindow::initPolarAlignment()
                                                         QString::number(static_cast<int>(state)) + ":" +
                                                         message + ":" +
                                                         QString::number(percentage));
+
+                // 极轴校准结束/停止后，自动恢复赤道仪跟踪
+                if (state == PolarAlignmentState::IDLE ||
+                    state == PolarAlignmentState::COMPLETED ||
+                    state == PolarAlignmentState::FAILED ||
+                    state == PolarAlignmentState::USER_INTERVENTION)
+                {
+                    if (indi_Client != nullptr && dpMount != nullptr)
+                    {
+                        indi_Client->setTelescopeTrackEnable(dpMount, true);
+
+                        bool isTrack = false;
+                        indi_Client->getTelescopeTrackEnable(dpMount, isTrack);
+                        emit this->wsThread->sendMessageToClient(isTrack ? "TelescopeTrack:ON"
+                                                                         : "TelescopeTrack:OFF");
+
+                        Logger::Log("PolarAlignment: Telescope tracking restored after polar alignment",
+                                    LogLevel::INFO, DeviceType::MAIN);
+                    }
+                    emit this->wsThread->sendMessageToClient("PolarAlignmentState:false:0:极轴校准已停止:0");
+                }
             });
 
             connect(polarAlignment, &PolarAlignment::adjustmentGuideData,
@@ -13529,6 +13667,9 @@ void MainWindow::getFocuserParameters()
     }
     autoFocusCoarseDivisions = coarseDivisions;
     emit wsThread->sendMessageToClient("Coarse Step Divisions:" + QString::number(autoFocusCoarseDivisions));
+
+    // 将当前 Focuser 串口列表与已保存串口下发给前端（若无保存则 savedPort 为空）
+    sendSerialPortOptions("Focuser");
 
 }
 
