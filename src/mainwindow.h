@@ -25,6 +25,7 @@
 #include <QJsonDocument>
 #include <QFileInfo>
 #include <QDir>
+#include <QRegularExpression>
 
 #include <fitsio.h>
 

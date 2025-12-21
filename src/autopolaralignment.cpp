@@ -2157,17 +2157,17 @@ bool PolarAlignment::waitForCaptureComplete()
         if (isCaptureEnd) { // 5秒后假设完成
             if (false) {
                 if (currentState == PolarAlignmentState::CHECKING_POLAR_POINT) {
-                    lastCapturedImage = QString("/home/quarcs/workspace/QUARCS/testimage1/1.fits");
+                    lastCapturedImage = QString("~/workspace/QUARCS/testimage1/1.fits");
                 }
                 if (currentState == PolarAlignmentState::FIRST_CAPTURE) {
-                    lastCapturedImage = QString("/home/quarcs/workspace/QUARCS/testimage1/6.fits");
+                    lastCapturedImage = QString("~/workspace/QUARCS/testimage1/6.fits");
                 }
                 if (currentState == PolarAlignmentState::SECOND_CAPTURE) {
-                    lastCapturedImage = QString("/home/quarcs/workspace/QUARCS/testimage1/7.fits");
+                    lastCapturedImage = QString("~/workspace/QUARCS/testimage1/7.fits");
                 }
                 
                 if (currentState == PolarAlignmentState::THIRD_CAPTURE ) {
-                    lastCapturedImage = QString("/home/quarcs/workspace/QUARCS/testimage1/8.fits");
+                    lastCapturedImage = QString("~/workspace/QUARCS/testimage1/8.fits");
                 }
                 // if (currentState == PolarAlignmentState::THIRD_CAPTURE) {
                 //     lastCapturedImage = QString("/home/quarcs/workspace/QUARCS/testimage1/4.fits");
@@ -2238,7 +2238,7 @@ bool PolarAlignment::waitForCaptureComplete()
             // 保存第一个调整点的图像
             if (currentState == PolarAlignmentState::FIRST_CAPTURE) {
                 // 创建目标目录（如果不存在）
-                QString targetDir = "/home/quarcs/images/";
+                QString targetDir = "~/images/";
                 QDir dir;
                 if (!dir.exists(targetDir)) {
                     if (dir.mkpath(targetDir)) {
@@ -2263,7 +2263,7 @@ bool PolarAlignment::waitForCaptureComplete()
             }else if (currentState == PolarAlignmentState::SECOND_CAPTURE){
                 // 保存第二个调整点的图像
                 // 创建目标目录（如果不存在）
-                QString targetDir = "/home/quarcs/images/";
+                QString targetDir = "~/images/";
                 QDir dir;
                 if (!dir.exists(targetDir)) {
                     if (dir.mkpath(targetDir)) {
@@ -2288,7 +2288,7 @@ bool PolarAlignment::waitForCaptureComplete()
             }else if (currentState == PolarAlignmentState::THIRD_CAPTURE){
                 // 保存第三个调整点的图像
                 // 创建目标目录（如果不存在）
-                QString targetDir = "/home/quarcs/images/";
+                QString targetDir = "~/images/";
                 QDir dir;
                 if (!dir.exists(targetDir)) {
                     if (dir.mkpath(targetDir)) {

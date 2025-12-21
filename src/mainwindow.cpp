@@ -89,7 +89,8 @@ MainWindow::MainWindow(QObject *parent) : QObject(parent)
     Logger::Initialize();
     getHostAddress();
 
-    wsThread = new WebSocketThread(websockethttpUrl, websockethttpsUrl);
+    wsThread = new WebSocketThread(websockethttpUrl, websockethttpsUrl, this);
+
     connect(wsThread, &WebSocketThread::receivedMessage, this, &MainWindow::onMessageReceived);
     wsThread->start();
     Logger::wsThread = wsThread;
@@ -1839,12 +1840,13 @@ void MainWindow::onMessageReceived(const QString &message)
     }
     else if (parts[0].trimmed() == "SynchronizeTime")
     {
-        QRegExp rx("SynchronizeTime:(\\d{2}:\\d{2}:\\d{2}):(\\d{4}-\\d{2}-\\d{2})");
-        int pos = rx.indexIn(message);
-        if (pos > -1)
+        QRegularExpression rx("SynchronizeTime:(\\d{2}:\\d{2}:\\d{2}):(\\d{4}-\\d{2}-\\d{2})");
+        QRegularExpressionMatch match = rx.match(message);
+        //        int pos = rx.indexIn(message);
+        if (match.hasMatch())
         {
-            QString time = rx.cap(1);
-            QString date = rx.cap(2);
+            QString time = match.captured(1);
+            QString date = match.captured(2);
             Logger::Log("SynchronizeTime ...", LogLevel::DEBUG, DeviceType::MAIN);
             synchronizeTime(time, date);
             setMountUTC(time, date);
@@ -2084,15 +2086,31 @@ void MainWindow::initINDIServer()
     system("pkill indiserver");
     system("rm -f /tmp/myFIFO");
     system("mkfifo /tmp/myFIFO");
-    glIndiServer = new QProcess();
+    if (!glIndiServer) {
+        glIndiServer = new QProcess(this);
+    }
     // glIndiServer->setReadChannel(QProcess::StandardOutput);
 
     // // 连接信号到槽函数
     // connect(glIndiServer, &QProcess::readyReadStandardOutput, this, &MainWindow::handleIndiServerOutput);
     // connect(glIndiServer, &QProcess::readyReadStandardError, this, &MainWindow::handleIndiServerError);
+    QString program = "indiserver";
+    QStringList arguments;
+    arguments << "-f" << "/tmp/myFIFO" << "-v" << "-p" << "7624";
+    glIndiServer->start(program, arguments);
+    if (!glIndiServer->waitForStarted(2000)) {
+        Logger::Log("Device MAIN: Failed to start indiserver! Error: " +
+        glIndiServer->errorString().toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+    } else {
+        Logger::Log("Device MAIN: initINDIServer finish! (Process PID: " +
+        std::to_string(glIndiServer->processId()) + ")", LogLevel::INFO, DeviceType::MAIN);
+    }
 
-    glIndiServer->start("indiserver -f /tmp/myFIFO -v -p 7624");
-    Logger::Log("initINDIServer finish!", LogLevel::INFO, DeviceType::MAIN);
+    // 4. Important: Capture runtime errors
+    connect(glIndiServer, &QProcess::readyReadStandardError, this, [this](){
+        QByteArray errors = glIndiServer->readAllStandardError();
+        Logger::Log("INDI STDERR: " + errors.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+    });
 }
 
 // void MainWindow::initINDIServer()
@@ -2788,7 +2806,7 @@ MeridianStatus MainWindow::checkMeridianStatus()
 int MainWindow::saveFitsAsPNG(QString fitsFileName, bool ProcessBin)
 {
     if (false){
-        fitsFileName = "/home/quarcs/workspace/QUARCS/testimage1/1.fits";
+        fitsFileName = "/~/workspace/QUARCS/testimage1/1.fits";
     }
     Logger::Log("Starting to save FITS as PNG...", LogLevel::INFO, DeviceType::CAMERA);
     cv::Mat image;
@@ -2989,7 +3007,7 @@ cv::Mat MainWindow::colorImage(cv::Mat img16)
     Logger::Log("Matrices for image processing created.", LogLevel::INFO, DeviceType::MAIN);
     Tools::ImageSoftAWB(img16, AWBImg16, MainCameraCFA, ImageGainR, ImageGainB, 30); // image software Auto White Balance is done in RAW image.
     Logger::Log("Auto White Balance applied.", LogLevel::INFO, DeviceType::MAIN);
-    cv::cvtColor(AWBImg16, AWBImg16color, CV_BayerRG2BGR);
+    cv::cvtColor(AWBImg16, AWBImg16color, cv::COLOR_BayerRG2BGR);
     Logger::Log("Image converted from Bayer to BGR.", LogLevel::INFO, DeviceType::MAIN);
 
     cv::cvtColor(AWBImg16color, AWBImg16mono, cv::COLOR_BGR2GRAY);
@@ -3209,12 +3227,13 @@ void MainWindow::printDevGroups2(const DriversList drivers_list, int ListNum, QS
         {
             Logger::Log("Processing device group: " + drivers_list.dev_groups[i].group.toStdString(), LogLevel::INFO, DeviceType::MAIN);
             // Uncomment and modify the following lines if you want to log device details and send messages
-            // for (int j = 0; j < drivers_list.dev_groups[i].devices.size(); j++)
-            // {
-            //     qDebug() << QString::fromStdString(drivers_list.dev_groups[i].devices[j].driver_name) << QString::fromStdString(drivers_list.dev_groups[i].devices[j].version) << QString::fromStdString(drivers_list.dev_groups[i].devices[j].label);
-            //     Logger::Log("Device details: " + drivers_list.dev_groups[i].devices[j].label + ", " + drivers_list.dev_groups[i].devices[j].driver_name + ", " + drivers_list.dev_groups[i].devices[j].version, LogLevel::INFO, DeviceType::MAIN);
-            //     websocket->messageSend("AddDriver:"+QString::fromStdString(drivers_list.dev_groups[i].devices[j].label)+":"+QString::fromStdString(drivers_list.dev_groups[i].devices[j].driver_name));
-            // }
+             for (int j = 0; j < drivers_list.dev_groups[i].devices.size(); j++)
+             {
+                 qDebug() << QString::fromStdString(drivers_list.dev_groups[i].devices[j].driver_name) << QString::fromStdString(drivers_list.dev_groups[i].devices[j].version) << QString::fromStdString(drivers_list.dev_groups[i].devices[j].label);
+                 Logger::Log("Device details: " + drivers_list.dev_groups[i].devices[j].label + ", " + drivers_list.dev_groups[i].devices[j].driver_name + ", " + drivers_list.dev_groups[i].devices[j].version, LogLevel::INFO, DeviceType::MAIN);
+                 emit wsThread->sendMessageToClient("AddDriver:" + QString::fromStdString(drivers_list.dev_groups[i].devices[j].label) + ":" + QString::fromStdString(drivers_list.dev_groups[i].devices[j].driver_name));
+                 //wsThread->sendMessageToClient("AddDriver:"+QString::fromStdString(drivers_list.dev_groups[i].devices[j].label)+":"+QString::fromStdString(drivers_list.dev_groups[i].devices[j].driver_name));
+             }
             DeviceSelect(ListNum, i);
         }
     }
@@ -3335,6 +3354,7 @@ bool MainWindow::indi_Driver_Confirm(QString DriverName, QString BaudRate)
     } else {
         Logger::Log("indi_Driver_Confirm | currentDeviceCode out of bounds: " + std::to_string(systemdevicelist.currentDeviceCode), LogLevel::ERROR, DeviceType::MAIN);
     }
+    return false;
 }
 
 bool MainWindow::indi_Driver_Clear()
@@ -5248,7 +5268,7 @@ void MainWindow::InitPHD2()
         // 5) 启动前清空 PHD2 日志目录，以规避“损坏/异常 GuidingLog 导致启动卡死”的问题
         //    目标目录：/home/quarcs/Documents/PHD2
         {
-            const QString phd2LogDirPath = QStringLiteral("/home/quarcs/Documents/PHD2");
+            const QString phd2LogDirPath = QStringLiteral("~/Documents/PHD2");
             QDir phd2LogDir(phd2LogDirPath);
             if (phd2LogDir.exists())
             {
@@ -7795,10 +7815,9 @@ void MainWindow::startSetCFW(int pos)
     {
         qDebug() << "Refocus is ON, starting autofocus before setting CFW...";
         Logger::Log("计划任务表: Refocus为ON，在执行拍摄前先执行自动对焦（仅最后一步精调）", LogLevel::INFO, DeviceType::MAIN);
-        
+
         // 先记录本行已触发过一次 Refocus，避免 AutoFocus 完成回调再次进入 startSetCFW 时无限重入
         schedule_refocusTriggeredIndex = schedule_currentNum;
-        
         // 启动自动对焦（startScheduleAutoFocus会设置isScheduleTriggeredAutoFocus标志）
         startScheduleAutoFocus();
         return; // 自动对焦完成后会继续执行startSetCFW
@@ -8222,7 +8241,14 @@ int MainWindow::CaptureImageSave()
     }
 
     QString CaptureTime = Tools::getFitsCaptureTime("/dev/shm/ccd_simulator.fits");
-    CaptureTime.replace(QRegExp("[^a-zA-Z0-9]"), "_");
+    QRegularExpression nonAlphaNumericRx("[^a-zA-Z0-9]");
+    QString tempCaptureTime = CaptureTime;
+    QRegularExpressionMatchIterator i = nonAlphaNumericRx.globalMatch(CaptureTime);
+    while (i.hasNext()) {
+        QRegularExpressionMatch match = i.next();
+        tempCaptureTime.replace(match.capturedStart(), match.capturedLength(), "_");
+    }
+    CaptureTime = tempCaptureTime;
     QString resultFileName = CaptureTime + ".fits";
 
     std::time_t currentTime = std::time(nullptr);
@@ -8354,7 +8380,14 @@ int MainWindow::solveFailedImageSave(const QString& imagePath)
         Logger::Log("solveFailedImageSave | Using current timestamp as filename: " + CaptureTime.toStdString(), LogLevel::INFO, DeviceType::MAIN);
     }
     
-    CaptureTime.replace(QRegExp("[^a-zA-Z0-9]"), "_");
+    QRegularExpression nonAlphaNumericRx("[^a-zA-Z0-9]");
+    QString tempCaptureTime = CaptureTime;
+    QRegularExpressionMatchIterator i = nonAlphaNumericRx.globalMatch(CaptureTime);
+    while (i.hasNext()) {
+        QRegularExpressionMatch match = i.next();
+        tempCaptureTime.replace(match.capturedStart(), match.capturedLength(), "_");
+    }
+    CaptureTime = tempCaptureTime;
     QString resultFileName = CaptureTime + ".fits";
     Logger::Log("solveFailedImageSave | Generated filename: " + resultFileName.toStdString(), LogLevel::INFO, DeviceType::MAIN);
 
@@ -12321,7 +12354,7 @@ void MainWindow::startAutoFocus()
         Logger::Log("自动对焦不使用空程补偿", LogLevel::INFO, DeviceType::FOCUSER);
     }
    for (int i = 1; i <= 11; i++) {
-    std::string filename = "/home/quarcs/test_fits/coarse/" + std::to_string(i) + ".fits";
+    std::string filename = "~/test_fits/coarse/" + std::to_string(i) + ".fits";
     autoFocus->setCaptureComplete(filename.c_str());
     }
     autoFocusConnections.push_back(connect(autoFocus, &AutoFocus::roiInfoChanged, this, [this](const QRect &roi)
@@ -13722,7 +13755,7 @@ void MainWindow::clearBoxCache(bool clearCache, bool clearUpdatePack, bool clear
     // 3. 可选：清理备份目录
     if (clearBackup)
     {
-        clearDirContents("/home/quarcs/workspace/QUARCS/backup");
+        clearDirContents("~/workspace/QUARCS/backup");
     }
 
     if (wsThread) emit wsThread->sendMessageToClient("ClearBoxCache:Success");

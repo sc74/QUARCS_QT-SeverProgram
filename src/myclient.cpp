@@ -27,8 +27,8 @@ MyClient::MyClient()
 {
 
     //   pMain = gui;
-    Logger::Log("indi_client | MyClient::MyClent", LogLevel::INFO, DeviceType::MAIN);
-    //   qInfo()<<"MyClient::MyClent"<<gethostid()<<getPort()<<getegid()<<geteuid();
+    Logger::Log("indi_client | MyClient::MyClient", LogLevel::INFO, DeviceType::MAIN);
+    //   qInfo()<<"MyClient::MyClient"<<gethostid()<<getPort()<<getegid()<<geteuid();
 }
 
 //************************************************************************

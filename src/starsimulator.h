@@ -1,6 +1,13 @@
 #ifndef STARSIMULATOR_H
 #define STARSIMULATOR_H
 
+#ifdef Const
+#undef Const
+#endif
+#ifdef R
+#undef R
+#endif
+
 #include <QObject>
 #include <QTimer>
 #include <QVector>

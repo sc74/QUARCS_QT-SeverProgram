@@ -1,6 +1,13 @@
 #ifndef AUTOFOCUS_H
 #define AUTOFOCUS_H
 
+#ifdef Const
+#undef Const
+#endif
+#ifdef R
+#undef R
+#endif
+
 #include <QObject>
 #include <QTimer>
 #include <QVector>

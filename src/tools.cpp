@@ -90,10 +90,11 @@ bool Tools::findStarsByPython_Process(QString filename)
     for (const QString& line : lines) {
         if (line.contains("最终HFR")) {
             // 提取HFR数值
-            QRegExp rx("最终HFR\\s*=\\s*([0-9.]+)");
-            if (rx.indexIn(line) != -1) {
-                bool ok;
-                g_lastHFR = rx.cap(1).toDouble(&ok);
+          QRegularExpression rx("最终HFR\\s*=\\s*([0-9.]+)");
+          QRegularExpressionMatch match = rx.match(line);
+          if (match.hasMatch()) {
+            bool ok;
+            g_lastHFR = match.captured(1).toDouble(&ok);
                 if (ok) {
                     qDebug() << "解析到HFR值:" << g_lastHFR;
                 } else {
@@ -170,11 +171,12 @@ bool Tools::findMedianHFRByPython_Process(QString filename)
         const QString &line = lines[i];
         if (line.contains("median_HFR"))
         {
-            QRegExp rx("median_HFR\\s*=\\s*([-+eE0-9\\.]+)");
-            if (rx.indexIn(line) != -1)
-            {
-                bool ok = false;
-                double val = rx.cap(1).toDouble(&ok);
+          QRegularExpression rx("最终HFR\\s*=\\s*([0-9.]+)");
+          QRegularExpressionMatch match = rx.match(line);
+          if (match.hasMatch())
+          {
+            bool ok = false;
+            double val = match.captured(1).toDouble(&ok);
                 if (ok)
                 {
                     parsedHFR = val;
@@ -256,11 +258,12 @@ bool Tools::findSNRByPython_Process(QString filename)
         const QString &line = lines[i];
         if (line.contains("result"))
         {
-            QRegExp rx("result\\s*=\\s*([-+eE0-9\\.]+)");
-            if (rx.indexIn(line) != -1)
-            {
-                bool ok = false;
-                double val = rx.cap(1).toDouble(&ok);
+          QRegularExpression rx("最终HFR\\s*=\\s*([0-9.]+)");
+          QRegularExpressionMatch match = rx.match(line);
+          if (match.hasMatch())
+          {
+            bool ok = false;
+            double val = match.captured(1).toDouble(&ok);
                 if (ok)
                 {
                     parsedSNR = val;
@@ -283,11 +286,12 @@ bool Tools::findSNRByPython_Process(QString filename)
             const QString &line = lines[i];
             if (line.contains("avg_top50_snr"))
             {
-                QRegExp rx("avg_top50_snr\\s*=\\s*([-+eE0-9\\.]+)");
-                if (rx.indexIn(line) != -1)
-                {
-                    bool ok = false;
-                    double val = rx.cap(1).toDouble(&ok);
+              QRegularExpression rx("最终HFR\\s*=\\s*([0-9.]+)");
+              QRegularExpressionMatch match = rx.match(line);
+              if (match.hasMatch())
+              {
+                bool ok = false;
+                double val = match.captured(1).toDouble(&ok);
                     if (ok)
                     {
                         parsedSNR = val;
@@ -2783,7 +2787,7 @@ void Tools::PaintHistogram(cv::Mat src,QLabel *label)
     glChannelCount = channelCount;
 
     cv::Mat gray;
-    cv::cvtColor(src, gray, CV_BGR2GRAY);//转换为灰度图像
+    cv::cvtColor(src, gray, cv::COLOR_BGR2GRAY);//转换为灰度图像
 
     const int channels[] = { 0 };
     cv::Mat hist;//定义输出Mat类型
@@ -2985,11 +2989,11 @@ void Tools::ShowOpenCV_QLabel_withRotate(cv::Mat img,QLabel *label,int RotateTyp
     //convert all kinds of image type to RGB888
     //input image is 3channel 8bit image
     if(img.type()==CV_8UC3){
-       cvtColor(img,imgRGB888,CV_BGR2RGB);
+       cvtColor(img,imgRGB888,cv::COLOR_BGR2RGB);
        //img.copyTo(imgRGB888);
     }
     else if(img.type()==CV_8UC1){
-       cvtColor(img,imgRGB888,CV_GRAY2BGR);
+       cvtColor(img,imgRGB888,cv::COLOR_GRAY2BGR);
     }
     else if(img.type()==CV_16UC1){
 
@@ -3034,7 +3038,7 @@ void Tools::ShowOpenCV_QLabel_withRotate(cv::Mat img,QLabel *label,int RotateTyp
     else if(RotateType==1)  nDegree = 180-cmdRotate_Degree;
     else if(RotateType==2)  nDegree = 180-cmdRotate_Degree -AzAltToRADEC_Degree;// cmdRotate_Degree-180;
 
-    QMatrix mat;
+    QTransform mat;
 
     mat.translate(center_x,center_y);
     mat.rotate((nDegree));
@@ -3508,24 +3512,25 @@ void Tools::CvDebugSave(cv::Mat img, const std::string& name) {
 }
 double Tools::getDecAngle(const QString &str)
 {
-    QRegExp rex("([-+]?)\\s*"                   // [sign] (1)
-                "(?:"                           // either
-                "(\\d+(?:\\.\\d+)?)\\s*"        // fract (2)
-                "([dhms°º]?)"                   // [dhms] (3) \u00B0\u00BA
-                "|"                             // or
-                "(?:(\\d+)\\s*([hHdD°º])\\s*)?" // [int degs] (4) (5)
-                "(?:"                           // either
-                "(?:(\\d+)\\s*['mM]\\s*)?"      //  [int mins]  (6)
-                "(\\d+(?:\\.\\d+)?)\\s*[\"sS]"  //  fract secs  (7)
-                "|"                             // or
-                "(\\d+(?:\\.\\d+)?)\\s*['mM]"   //  fract mins (8)
-                ")"                             // end
-                ")"                             // end
-                "\\s*([NSEW]?)",                // [point] (9)
-                Qt::CaseInsensitive);
-    if (rex.exactMatch(str))
-    {
-        QStringList caps = rex.capturedTexts();
+  QRegularExpression rx("([-+]?)\\s*"                   // [sign] (1)
+              "(?:"                           // either
+              "(\\d+(?:\\.\\d+)?)\\s*"        // fract (2)
+              "([dhms°º]?)"                   // [dhms] (3) \u00B0\u00BA
+              "|"                             // or
+              "(?:(\\d+)\\s*([hHdD°º])\\s*)?" // [int degs] (4) (5)
+              "(?:"                           // either
+              "(?:(\\d+)\\s*['mM]\\s*)?"      //  [int mins]  (6)
+              "(\\d+(?:\\.\\d+)?)\\s*[\"sS]"  //  fract secs  (7)
+              "|"                             // or
+              "(\\d+(?:\\.\\d+)?)\\s*['mM]"   //  fract mins (8)
+              ")"                             // end
+              ")"                             // end
+              "\\s*([NSEW]?)",                // [point] (9)
+              QRegularExpression::CaseInsensitiveOption);
+  QRegularExpressionMatch match = rx.match(str);
+  if (match.hasMatch() && match.capturedLength(0) == str.length())
+  {
+    QStringList caps = match.capturedTexts();
 #if 0
         std::cout << "reg exp: ";
         for( int i = 1; i <= rex.captureCount() ; ++i ){
@@ -3656,7 +3661,7 @@ cv::Mat Tools::CalMoments(cv::Mat image)
   }
   else
   {
-    cvtColor(image, grayImage, CV_RGB2GRAY);
+    cvtColor(image, grayImage, cv::COLOR_RGB2GRAY);
   }
   Logger::Log("CalMoments:2", LogLevel::INFO, DeviceType::MAIN);
  
@@ -3673,7 +3678,7 @@ cv::Mat Tools::SubBackGround(cv::Mat image)
     }
     else
     {
-      cvtColor(image, gray, CV_RGB2GRAY);
+      cvtColor(image, gray, cv::COLOR_RGB2GRAY);
     }
     cv::Scalar scalar = mean(gray);
     double Background = scalar.val[0];

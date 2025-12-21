@@ -12,7 +12,7 @@
 #include <cmath>
 #include <algorithm>
 #include "myclient.h"  // MyClient类定义
-#include "qhyccd.h"    // QHYCCD_SUCCESS常量
+#include "libqhy/qhyccd.h"    // QHYCCD_SUCCESS常量
 #include "tools.h"   // Tools类
 #include "Logger.h"  // Logger类
 #include <stellarsolver.h> // FITSImage类来自stellarsolver
@@ -4762,7 +4762,7 @@ QString AutoFocus::getVirtualOutputPath() const
 
 QString AutoFocus::getCurrentTestImagePath() const
 {
-    return QString("/home/quarcs/test_fits/coarse/%1.fits").arg(m_testFileCounter);
+    return QString("~/test_fits/coarse/%1.fits").arg(m_testFileCounter);
 }
 
 // ==================== 星点选择方法 ====================
@@ -4939,7 +4939,7 @@ bool AutoFocus::detectMedianHFRByPython(double &hfr)
 
 #if AUTOFOCUS_SNR_TEST_MODE
     // === 测试模式：使用 /home/quarcs/test_fits/1/1.fits ~ 9.fits 作为 super-fine 测试文件 ===
-    QString testFilePath = QString("/home/quarcs/test_fits/1/%1.fits").arg(m_testFileCounter);
+    QString testFilePath = QString("~/test_fits/1/%1.fits").arg(m_testFileCounter);
     QFileInfo fi(testFilePath);
     if (!fi.exists() || fi.size() == 0) {
         log(QString("错误：super-fine 测试文件不存在或无效: %1").arg(testFilePath));
@@ -5014,7 +5014,7 @@ bool AutoFocus::detectSNRByPython(double &snr)
 
 #if AUTOFOCUS_SNR_TEST_MODE
     // === 测试模式：使用 /home/quarcs/FOCUSTEST/1.fits ~ 10.fits 循环 ===
-    QString testFilePath = QString("/home/quarcs/FOCUSTEST/%1.fits").arg(m_testFileCounter);
+    QString testFilePath = QString("~/FOCUSTEST/%1.fits").arg(m_testFileCounter);
     QFileInfo fi(testFilePath);
     if (!fi.exists() || fi.size() == 0) {
         log(QString("错误：测试文件不存在或无效: %1").arg(testFilePath));

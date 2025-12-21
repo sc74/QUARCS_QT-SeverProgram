@@ -5,10 +5,16 @@
 #include <QWebSocket>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QUrl>
 #include <QTimer>
-#include <QNetworkConfigurationManager>
-#include <QQueue>
 #include <QElapsedTimer>
+#include <QQueue>
+#include <QAbstractSocket>
+#include <QSslError>
+#include <QSslConfiguration>
+
+// Note: QJsonDocument/QJsonObject inclusions are not necessary here because they are internal types
+// in the .cpp.
 
 class WebSocketClient : public QObject
 {
@@ -16,57 +22,65 @@ class WebSocketClient : public QObject
 public:
     explicit WebSocketClient(const QUrl &httpUrl, const QUrl &httpsUrl, QObject *parent = nullptr);
     void messageSend(QString message);
-    void sendAcknowledgment(QString  messageObj);
     void sendProcessCommandReturn(QString message);
-    void reconnect();
-    void onNetworkStateChanged(bool isOnline);
+    void sendAcknowledgment(QString messageID);
     void stop();
 
 signals:
-    void closed();
     void messageReceived(const QString &message);
-    void connectionError(const QString &error);
-    void connectionStatusChanged(bool isConnected, const QString &status);
+    void connectionStatusChanged(bool isConnected, const QString &statusMessage);
+    void connectionError(const QString &errorMessage);
 
 private slots:
+    // HTTPS Slots
     void onHttpsConnected();
     void onHttpsDisconnected();
+    void onSslErrors(const QList<QSslError> &errors);
+
+    // HTTP Slots
     void onHttpConnected();
     void onHttpDisconnected();
-    void onTextMessageReceived(QString message);
+
+    // Common Slots
     void onError(QAbstractSocket::SocketError error);
-    void onSslErrors(const QList<QSslError> &errors);
+    void reconnect();
+    void onTextMessageReceived(QString message);
     void onHeartbeatTimeout();
     void onPongReceived(quint64 elapsedTime, const QByteArray &payload);
+    // [DELETED] void onNetworkStateChanged(bool isOnline); - Replaced by the logic of reconnection
 
 private:
-    QWebSocket httpWebSocket;
+    void flushPending();
+    QString getErrorString(QAbstractSocket::SocketError error);
+
+private:
     QWebSocket httpsWebSocket;
-    QUrl httpUrl;    // 添加HTTP URL成员变量
-    QUrl httpsUrl;   // 添加HTTPS URL成员变量
-    bool isHttpsConnected = false;
-    bool isHttpConnected = false;
+    QWebSocket httpWebSocket;
+    QUrl httpUrl;
+    QUrl httpsUrl;
 
-    QTimer reconnectTimer; // 自动重连定时器
-    QNetworkConfigurationManager networkManager; // 网络配置管理器
-    bool isNetworkConnected = true; // 记录网络连接状态
+    // State
+    bool isHttpsConnected;
+    bool isHttpConnected;
+    // [SUPPRIMÉ] bool isNetworkConnected;
+    // [SUPPRIMÉ] QNetworkConfigurationManager networkManager;
 
-    bool isReconnecting = false; // 添加一个标志来表示是否正在重连
+    // Reconnection Logic
+    QTimer reconnectTimer;
     int reconnectAttempts = 0;
     int currentReconnectIntervalMs = 1000;
-    const int maxReconnectIntervalMs = 15000;
+    const int maxReconnectIntervalMs = 60000;
 
-    QTimer heartbeatTimer; // 心跳定时器
+    // Heartbeat/Pong Logic
+    QTimer heartbeatTimer;
     QElapsedTimer lastPongTimer;
+    const int heartbeatIntervalMs = 5000;
+    const int pongTimeoutMultiplier = 3; // 15s timeout
     int missedPongs = 0;
-    const int heartbeatIntervalMs = 10000;
-    const int pongTimeoutMultiplier = 2; // 超过2个心跳周期未收到Pong则判定超时
 
-    QQueue<QByteArray> pendingMessages; // 断线期间排队发送
-    const int maxPendingMessages = 2000;
-    void flushPending();
-    
-    QString getErrorString(QAbstractSocket::SocketError error);
+    // Pending Messages
+    QQueue<QByteArray> pendingMessages;
+    const int maxPendingMessages = 1000;
 };
 
 #endif // WEBSOCKETCLIENT_H

@@ -1,6 +1,13 @@
 #ifndef POLARALIGNMENT_H
 #define POLARALIGNMENT_H
 
+#ifdef Const
+#undef Const
+#endif
+#ifdef R
+#undef R
+#endif
+
 #include <QObject>
 #include <QTimer>
 #include <QThread>
