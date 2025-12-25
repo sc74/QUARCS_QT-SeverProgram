@@ -1702,6 +1702,8 @@ private:
     QUrl websockethttpUrl;                // WS HTTP URL
     QUrl websockethttpsUrl;               // WS HTTPS URL
 
+    QString user;
+
     MyClient *indi_Client = nullptr;      // INDI 客户端
     QProcess *glIndiServer = nullptr;     // INDI 服务器进程
 

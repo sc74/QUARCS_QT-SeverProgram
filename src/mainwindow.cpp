@@ -7,33 +7,33 @@
 #include <algorithm>
 #include <cmath>
 
-// Qt 相关头文件（用于文件/目录操作）
+//Qt related header files (for file/directory operations)
 #include <QDir>
 #include <QFile>
 
-// ===== 你的 BUFSZ 定义（保持不变）=====
-#define BUFSZ 16590848 // 原始约 16 MB
+//===== Your BUFSZ definition (remain unchanged) =====
+#define BUFSZ 16590848 // Original approx. 16 MB
 
-// ===== 共享内存固定偏移常量（与写端一致）=====
-static constexpr size_t kHeaderOff  = 1024;  // 你原来图像头：X/Y/bitDepth 的存放起点
-static constexpr size_t kFlagOff    = 2047;  // 帧状态标志
-static constexpr size_t kPayloadOff = 2048;  // 像素数据起点
+//===== Shared memory fixed offset constant (consistent with the write end) =====
+static constexpr size_t kHeaderOff  = 1024;  //Your original image header: the storage starting point of X/Y/bitDepth
+static constexpr size_t kFlagOff    = 2047;  //Frame status flag
+static constexpr size_t kPayloadOff = 2048;  //Starting point of pixel data
 
-// ===== 新增 V2 头（放在 0..1023，不影响旧逻辑）=====
+// ===== Added V2 header (placed at 0..1023, does not affect the old logic) =====
 #pragma pack(push,1)
 struct ShmHdrV2 {
     uint32_t magic;       // 'PHD2' = 0x32444850
     uint16_t version;     // 0x0002
     uint16_t coding;      // 0=RAW, 1=RLE, 2=NEAREST
-    uint32_t payloadSize; // 像素区实际写入字节数（用于安全 memcpy/解码）
+    uint32_t payloadSize; // Number of bytes actually written to the pixel area (for safe memcpy/decoding)
 
-    uint32_t origW;       // 原图宽
-    uint32_t origH;       // 原图高
-    uint32_t outW;        // 实际写入帧宽（RAW/RLE 与 orig 相同；NEAREST 为缩后）
-    uint32_t outH;        // 实际写入帧高
+    uint32_t origW;       // Original image width
+    uint32_t origH;       // Original image height
+    uint32_t outW;        //Actual writing frame width (RAW/RLE is the same as orig; NEAREST is deflated)
+    uint32_t outH;        //actual writing frame height
     uint16_t bitDepth;    // 8 or 16
-    uint16_t scale;       // NEAREST 时为 s；RAW/RLE=1
-    uint32_t reserved[8]; // 预留
+    uint16_t scale;       // s for NEAREST; RAW/RLE=1
+    uint32_t reserved[8]; // reserved
 };
 #pragma pack(pop)
 
@@ -56,11 +56,11 @@ SystemDeviceList systemdevicelist;
 // QUrl websocketUrl(QStringLiteral("ws://192.168.2.31:8600"));
 QUrl websocketUrl;
 
-// 定义静态成员变量 instance
+// Define static member variables instance
 MainWindow *MainWindow::instance = nullptr;
 
 std::string MainWindow::getBuildDate()
-{ // 编译时的日期
+{ // compile time date
     static const std::map<std::string, std::string> monthMap = {
         {"Jan", "01"}, {"Feb", "02"}, {"Mar", "03"}, {"Apr", "04"}, {"May", "05"}, {"Jun", "06"}, {"Jul", "07"}, {"Aug", "08"}, {"Sep", "09"}, {"Oct", "10"}, {"Nov", "11"}, {"Dec", "12"}};
 
@@ -74,15 +74,15 @@ std::string MainWindow::getBuildDate()
 
 MainWindow::MainWindow(QObject *parent) : QObject(parent)
 {
-    // 初始化极轴校准对象为nullptr
+    // Initialize the polar calibration object to nullptr
     polarAlignment = nullptr;
 
-    // 初始化相机参数
+    // Initialize camera parameters
     glFocalLength = 0;
     glCameraSize_width = 0.0;
     glCameraSize_height = 0.0;
 
-    system_timer = new QTimer(this); // 用于对系统的监测
+    system_timer = new QTimer(this); // For system monitoring
     connect(system_timer, &QTimer::timeout, this, &MainWindow::updateCPUInfo);
     system_timer->start(3000);
 
@@ -95,10 +95,10 @@ MainWindow::MainWindow(QObject *parent) : QObject(parent)
     wsThread->start();
     Logger::wsThread = wsThread;
 
-    // 记住当前实例
+    // Remember the current instance
     instance = this;
 
-    // 安装自定义的消息处理器
+    // Install a custom message handler
     // qInstallMessageHandler(customMessageHandler);
 
     InitPHD2();
@@ -113,7 +113,7 @@ MainWindow::MainWindow(QObject *parent) : QObject(parent)
     Tools::InitSystemDeviceList();
     Tools::initSystemDeviceList(systemdevicelist);
     Tools::makeConfigFile();
-    // 取消：不再读取/保存中天翻转持久化状态（统一使用几何法 needsFlip）
+    // Cancel: No longer read/save the Zhongtian flip persistence state (unify the geometric method needsFlip)
     Tools::makeImageFolder();
     connect(Tools::getInstance(), &Tools::parseInfoEmitted, this, &MainWindow::onParseInfoEmitted);
 
@@ -134,11 +134,11 @@ MainWindow::MainWindow(QObject *parent) : QObject(parent)
     connect(PHDControlGuide_threadTimer, &QTimer::timeout, this, &MainWindow::onPHDControlGuideTimeout);
     connect(PHDControlGuide_thread, &QThread::finished, PHDControlGuide_threadTimer, &QTimer::stop);
     connect(PHDControlGuide_thread, &QThread::destroyed, PHDControlGuide_threadTimer, &QTimer::deleteLater);
-    connect(PHDControlGuide_thread, &QThread::started, PHDControlGuide_threadTimer, QOverload<>::of(&QTimer::start)); // 新增
+    connect(PHDControlGuide_thread, &QThread::started, PHDControlGuide_threadTimer, QOverload<>::of(&QTimer::start)); // New
     PHDControlGuide_thread->start();
     // getConnectedSerialPorts();
 
-    // 电调控制初始化
+    // ESC control initialization
     focusMoveTimer = new QTimer(this);
     connect(focusMoveTimer, &QTimer::timeout, this, &MainWindow::HandleFocuserMovementDataPeriodically);
 
@@ -148,7 +148,7 @@ MainWindow::MainWindow(QObject *parent) : QObject(parent)
 
 MainWindow::~MainWindow()
 {
-    // 清理极轴校准对象
+    // Clean up polar alignment objects
     if (polarAlignment != nullptr)
     {
         polarAlignment->stopPolarAlignment();
@@ -163,7 +163,7 @@ MainWindow::~MainWindow()
     wsThread->wait();
     delete wsThread;
 
-    // 清理静态实例
+    // Clean up static instances
     instance = nullptr;
 }
 
@@ -171,7 +171,7 @@ void MainWindow::getHostAddress()
 {
     int retryCount = 0;
     const int maxRetries = 20;
-    const int waitTime = 5000; // 5秒
+    const int waitTime = 5000; // 5 seconds
 
     while (retryCount < maxRetries)
     {
@@ -180,7 +180,7 @@ void MainWindow::getHostAddress()
 
         foreach (const QNetworkInterface &interface, interfaces)
         {
-            // 排除回环接口和非活动接口
+            // Exclude loopback interfaces and inactive interfaces
             if (interface.flags() & QNetworkInterface::IsLoopBack || !(interface.flags() & QNetworkInterface::IsUp))
                 continue;
 
@@ -216,7 +216,7 @@ void MainWindow::getHostAddress()
             break;
 
         retryCount++;
-        QThread::sleep(waitTime / 1000); // 等待5秒
+        QThread::sleep(waitTime / 1000); // wait 5 seconds
     }
 
     if (retryCount == maxRetries)
@@ -227,26 +227,26 @@ void MainWindow::getHostAddress()
 
 void MainWindow::onMessageReceived(const QString &message)
 {
-    // 处理接收到的消息
+    // Process received messages
     Logger::Log("Received message in MainWindow:" + message.toStdString(), LogLevel::DEBUG, DeviceType::MAIN);
     
-    // 分割消息以提取命令（用于后续处理）
+    // Split messages to extract commands (for subsequent processing)
     QStringList parts = message.split(':');
     QString command = parts.size() > 0 ? parts[0].trimmed() : message.trimmed();
     
-    // 防抖检查：如果短时间内接收到与最后一条完全相同的命令（包括参数），则只执行一条
-    // 只保留最后一条命令，只检查最后一条的命令是否重复
+    // Anti-shake check: If the exact same command (including parameters) as the last one is received within a short period of time, only one will be executed.
+    // Only keep the last command and only check whether the last command is repeated.
     QString trimmedMessage = message.trimmed();
     qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
     
-    // 检查当前命令是否与最后一条命令相同，且在时间窗口内
+    // Check if the current command is the same as the last command and within the time window
     if (!lastCommandMessage.isEmpty() && lastCommandMessage == trimmedMessage && lastCommandTime > 0)
     {
         qint64 timeDiff = currentTime - lastCommandTime;
         
         if (timeDiff < COMMAND_DEBOUNCE_MS)
         {
-            // 在时间窗口内收到与最后一条相同的命令（命令和参数都相同），跳过执行
+            // When the same command as the last one is received within the time window (the command and parameters are the same), execution is skipped
             Logger::Log("Command debounce: Skipping duplicate message '" + trimmedMessage.toStdString() + 
                        "' received within " + std::to_string(timeDiff) + "ms (threshold: " + 
                        std::to_string(COMMAND_DEBOUNCE_MS) + "ms)", LogLevel::DEBUG, DeviceType::MAIN);
@@ -254,11 +254,11 @@ void MainWindow::onMessageReceived(const QString &message)
         }
     }
     
-    // 更新最后一条命令和时间戳
+    // Update last command and timestamp
     lastCommandMessage = trimmedMessage;
     lastCommandTime = currentTime;
     
-    // 分割消息
+    // split message
     // QStringList parts = message.split(':');
 
     if (parts.size() >= 2 && parts[0].trimmed() == "ConfirmIndiDriver")
@@ -323,7 +323,7 @@ void MainWindow::onMessageReceived(const QString &message)
     {
         Logger::Log("setExposureTime:" + parts[1].trimmed().toStdString(), LogLevel::DEBUG, DeviceType::CAMERA);
         int ExpTime = parts[1].trimmed().toInt();
-        glExpTime = ExpTime;  // 设置曝光时间(ms)
+        glExpTime = ExpTime;  // Set exposure time (ms)
     }
     else if (parts.size() == 2 && parts[0].trimmed() == "focusSpeed")
     {
@@ -359,8 +359,8 @@ void MainWindow::onMessageReceived(const QString &message)
         Logger::Log("focuser to " + parts[1].trimmed().toStdString() + " move " + parts[2].trimmed().toStdString() + " steps", LogLevel::DEBUG, DeviceType::FOCUSER);
         QString LR = parts[1].trimmed();
         int Steps = parts[2].trimmed().toInt();
-        // 单步执行时，如果上一次移动已完成，允许立即执行新的单步
-        // 注意：防抖机制会阻止完全相同的命令，但不同步数的命令应该可以执行
+        // When stepping, allow a new step to be executed immediately if the previous move has completed
+        // Note: The anti-shake mechanism will block the exact same command, but a command with a different number of syncs should be able to be executed
         FocuserControlMoveStep(LR == "Left", Steps);
     }
 
@@ -477,7 +477,7 @@ void MainWindow::onMessageReceived(const QString &message)
         const QString prefix = "AutoFocusConfirm:";
         QString mode = message.mid(prefix.length()).trimmed();
 
-        // 发送自动对焦开始事件到前端
+        // Send autofocus start event to the front end
         if (mode.compare("No", Qt::CaseInsensitive) != 0) {
             if (isAutoFocus) {
                 Logger::Log("AutoFocus already started", LogLevel::INFO, DeviceType::MAIN);
@@ -486,20 +486,20 @@ void MainWindow::onMessageReceived(const QString &message)
         }
 
         if (mode.isEmpty() || mode == "Yes" || mode == "Coarse") {
-            // 完整自动对焦流程：粗调 + 精调 + super-fine
-            // 增加模式标记：full，便于前端区分不同自动对焦模式的 UI 行为
-            emit wsThread->sendMessageToClient("AutoFocusStarted:full:自动对焦已开始");
+            // Complete autofocus process: coarse adjustment + fine adjustment + super-fine
+            // Add mode mark: full to facilitate the front-end to distinguish the UI behavior of different autofocus modes
+            emit wsThread->sendMessageToClient("AutoFocusStarted:full:Autofocus has started");
             startAutoFocus();
         }
         else if (mode == "Fine") {
-            // 新：仅从当前位置执行 HFR 精调（固定步长 100，采样 11 点）
-            // 增加模式标记：fine（仅精调模式）
-            emit wsThread->sendMessageToClient("AutoFocusStarted:fine:自动对焦已开始");
+            // New: Perform HFR fine tuning only from current position (fixed step size 100, samples 11 points)
+            // Add mode flag: fine (only fine tuning mode)
+            emit wsThread->sendMessageToClient("AutoFocusStarted:fine:Autofocus has started");
             startAutoFocusFineHFROnly();
         }
-        else { // No 或未知模式，视为取消
-            Logger::Log("用户取消自动对焦", LogLevel::INFO, DeviceType::MAIN);
-            emit wsThread->sendMessageToClient("AutoFocusCancelled:用户已取消自动对焦");
+        else { // No or unknown mode, considered canceled
+            Logger::Log("User cancels autofocus", LogLevel::INFO, DeviceType::MAIN);
+            emit wsThread->sendMessageToClient("AutoFocusCancelled:User has canceled autofocus");
         }
     }
     else if (message == "StopAutoFocus")
@@ -514,7 +514,7 @@ void MainWindow::onMessageReceived(const QString &message)
         autoFocus->deleteLater();
         cleanupAutoFocusConnections();
         autoFocus = nullptr;
-        emit wsThread->sendMessageToClient("AutoFocusEnded:自动对焦已结束");
+        emit wsThread->sendMessageToClient("AutoFocusEnded:Autofocus ended");
     }
     else if (message == "abortExposure")
     {
@@ -524,11 +524,11 @@ void MainWindow::onMessageReceived(const QString &message)
     else if (message == "RestartPHD2" || message == "PHD2RestartConfirm")
     {
         Logger::Log("Frontend requested to restart PHD2", LogLevel::INFO, DeviceType::GUIDER);
-        // 先断开导星设备（均为已有接口，不新增函数）
+        // Disconnect the guide device first (all are existing interfaces, no new functions are added)
         if (dpGuider && dpGuider->isConnected()) {
             DisconnectDevice(indi_Client, dpGuider->getDeviceName(), "Guider");
         }
-        // 重启 PHD2
+        // Restart PHD2
         InitPHD2();
         emit wsThread->sendMessageToClient("PHD2Restarting");
     }
@@ -547,7 +547,7 @@ void MainWindow::onMessageReceived(const QString &message)
         // Logger::Log("ClearSystemDeviceList ...", LogLevel::DEBUG, DeviceType::MAIN);
         clearConnectedDevices();
         Logger::Log("clearConnectedDevices ...", LogLevel::DEBUG, DeviceType::MAIN);
-        // 重启indi服务器
+        // Restart INDI server
         initINDIServer();
         Logger::Log("initINDIServer ...", LogLevel::DEBUG, DeviceType::MAIN);
         initINDIClient();
@@ -768,11 +768,11 @@ void MainWindow::onMessageReceived(const QString &message)
     }
     else if (parts.size() == 3 && parts[0].trimmed() == "SetSerialPort")
     {
-        // 手动设置串口路径，仅针对 Mount / Focuser
+        // Manually set the serial port path, only for Mount/Focuser
         QString devType = parts[1].trimmed();
         QString portPath = parts[2].trimmed();
 
-        // 特殊值 "default" 或空字符串：表示回到自动匹配模式，不强制指定串口
+        // Special value "default" or empty string: means returning to automatic matching mode and not forcing the serial port to be specified.
         bool isDefault =
             portPath.trimmed().isEmpty() ||
             portPath.trimmed().compare("default", Qt::CaseInsensitive) == 0;
@@ -790,14 +790,14 @@ void MainWindow::onMessageReceived(const QString &message)
         {
             Logger::Log("SetSerialPort | " + devType.toStdString() + " -> <default(auto-detect)>",
                         LogLevel::INFO, DeviceType::MAIN);
-            // 不立即修改设备端口，后续连接时走自动识别/重新匹配逻辑
+            // The device port is not modified immediately, and automatic identification/rematching logic is used during subsequent connections.
             return;
         }
 
         Logger::Log("SetSerialPort | " + devType.toStdString() + " -> " + portPath.toStdString(),
                     LogLevel::INFO, DeviceType::MAIN);
 
-        // 若设备已存在，则立即更新其串口端口（仅修改内存状态，不做持久化）
+        // If the device already exists, its serial port will be updated immediately (only the memory status will be modified, not persisted)
         if (devType == "Mount" && dpMount != nullptr)
         {
             indi_Client->setDevicePort(dpMount, portPath);
@@ -849,23 +849,23 @@ void MainWindow::onMessageReceived(const QString &message)
         Logger::Log("StopSchedule !", LogLevel::DEBUG, DeviceType::MAIN);
     StopSchedule = true;
     isScheduleRunning = false;
-    // 立即通知前端计划任务已停止，避免仅依赖进度推断带来的延迟
+    // Immediately notify the front-end that the scheduled task has stopped, avoiding the delays caused by relying solely on progress inference
     emit wsThread->sendMessageToClient("ScheduleRunning:false");
         
-        // 如果自动对焦正在运行（特别是由计划任务表触发的），也要停止自动对焦
+        // Also stop autofocus if it is running (especially if triggered by a scheduler)
         if (isAutoFocus && autoFocus != nullptr)
         {
-            Logger::Log("停止计划任务表时，检测到自动对焦正在运行，同时停止自动对焦", LogLevel::INFO, DeviceType::MAIN);
-            isScheduleTriggeredAutoFocus = false; // 清除标志，避免自动对焦完成后继续执行拍摄
+            Logger::Log("When stopping the scheduled task list, it is detected that the autofocus is running and the autofocus is stopped at the same time.", LogLevel::INFO, DeviceType::MAIN);
+            isScheduleTriggeredAutoFocus = false; // Clear the flag to avoid continuing to shoot after autofocus is completed
             autoFocus->stopAutoFocus();
             cleanupAutoFocusConnections();
             autoFocus->deleteLater();
             autoFocus = nullptr;
             isAutoFocus = false;
-            emit wsThread->sendMessageToClient("AutoFocusEnded:自动对焦已停止（计划任务表已暂停）");
+            emit wsThread->sendMessageToClient("AutoFocusEnded:Autofocus has stopped (schedule has been paused)");
         }
         
-        // 立即停止曝光延迟定时器
+        // Immediately stop the exposure delay timer
         bool wasActive = exposureDelayTimer.isActive();
         exposureDelayTimer.stop();
         exposureDelayTimer.disconnect();
@@ -873,7 +873,7 @@ void MainWindow::onMessageReceived(const QString &message)
         {
             Logger::Log(("Exposure delay timer stopped immediately (wasActive: " + QString::number(wasActive ? 1 : 0) + ", elapsed: " + QString::number(exposureDelayElapsed_ms) + " ms)").toStdString(), LogLevel::INFO, DeviceType::MAIN);
             qDebug() << "Exposure delay timer stopped immediately (wasActive:" << wasActive << ", elapsed:" << exposureDelayElapsed_ms << "ms)";
-            exposureDelayElapsed_ms = 0; // 重置已过去的时间
+            exposureDelayElapsed_ms = 0; // Reset elapsed time
         }
     }
 
@@ -918,12 +918,12 @@ void MainWindow::onMessageReceived(const QString &message)
         Logger::Log("getStagingScheduleData finish!", LogLevel::DEBUG, DeviceType::MAIN);
     }
 
-    // ---------- Schedule presets (任务计划表预设管理) ----------
+    // ----------Schedule presets (task schedule preset management) ----------
     else if (parts[0].trimmed() == "saveSchedulePreset" && parts.size() >= 3)
     {
-        // 格式：saveSchedulePreset:<name>:<rawData>
+        // Format: save schedule preset:<name>:<raw data>
         QString presetName = parts[1].trimmed();
-        // 重新拼接 data（防止 data 中本身包含 ':' 被 split 掉）
+        // Re-splice data (to prevent data containing ':' from being split)
         QString rawData;
         for (int i = 2; i < parts.size(); ++i)
         {
@@ -937,20 +937,20 @@ void MainWindow::onMessageReceived(const QString &message)
     }
     else if (parts[0].trimmed() == "loadSchedulePreset" && parts.size() == 2)
     {
-        // 格式：loadSchedulePreset:<name>
+        // Format: load schedule preset:<name>
         QString presetName = parts[1].trimmed();
         Logger::Log("loadSchedulePreset | name=" + presetName.toStdString(), LogLevel::DEBUG, DeviceType::MAIN);
         QString data = Tools::readSchedulePreset(presetName);
         if (!data.isEmpty())
         {
-            // 复用现有 StagingScheduleData 协议，直接推送给前端
+            // Reuse the existing StagingScheduleData protocol and push it directly to the front end
             QString messageOut = "StagingScheduleData:" + data;
             emit wsThread->sendMessageToClient(messageOut);
         }
     }
     else if (parts[0].trimmed() == "deleteSchedulePreset" && parts.size() == 2)
     {
-        // 格式：deleteSchedulePreset:<name>
+        // Format: delete schedule preset:<name>
         QString presetName = parts[1].trimmed();
         Logger::Log("deleteSchedulePreset | name=" + presetName.toStdString(), LogLevel::DEBUG, DeviceType::MAIN);
         bool ok = Tools::deleteSchedulePreset(presetName);
@@ -961,7 +961,7 @@ void MainWindow::onMessageReceived(const QString &message)
     }
     else if (message == "listSchedulePresets")
     {
-        // 返回格式：SchedulePresetList:name1;name2;name3
+        // Return format: schedule preset list:name1;name2;name3
         Logger::Log("listSchedulePresets ...", LogLevel::DEBUG, DeviceType::MAIN);
         QStringList names = Tools::listSchedulePresets();
         QString payload = "SchedulePresetList:";
@@ -1191,7 +1191,7 @@ void MainWindow::onMessageReceived(const QString &message)
         {
             if (isGuiderLoopExp && parts[1].trimmed() == "false")
             {
-                // 关闭循环曝光：停止高频定时器
+                // Turn off cycle exposure: stop high frequency timer
                 QMetaObject::invokeMethod(m_threadTimer, "stop", Qt::QueuedConnection);
                 QMetaObject::invokeMethod(PHDControlGuide_threadTimer, "stop", Qt::QueuedConnection);
 
@@ -1207,7 +1207,7 @@ void MainWindow::onMessageReceived(const QString &message)
             {
                 Logger::Log("Start GuiderLoopExp ...", LogLevel::INFO, DeviceType::GUIDER);
                 isGuiderLoopExp = true;
-                // 开启循环曝光：启动高频定时器
+                // Turn on cycle exposure: start high-frequency timer
                 QMetaObject::invokeMethod(m_threadTimer, "start", Qt::QueuedConnection);
                 QMetaObject::invokeMethod(PHDControlGuide_threadTimer, "start", Qt::QueuedConnection);
 
@@ -1243,7 +1243,7 @@ void MainWindow::onMessageReceived(const QString &message)
         call_phd_ClearCalibration();
         call_phd_StartLooping();
 
-        // 重新标定也会开启循环曝光，这里确保高频定时器已启动
+        // Recalibration will also enable cycle exposure. Make sure the high-frequency timer is started.
         QMetaObject::invokeMethod(m_threadTimer, "start", Qt::QueuedConnection);
         QMetaObject::invokeMethod(PHDControlGuide_threadTimer, "start", Qt::QueuedConnection);
 
@@ -1320,7 +1320,7 @@ void MainWindow::onMessageReceived(const QString &message)
         Logger::Log("MoveFileToUSB ...", LogLevel::DEBUG, DeviceType::MAIN);
         QStringList ImagePath = parseString(parts[1].trimmed().toStdString(), ImageSaveBasePath);
         QString usbName = "";
-        // 如果提供了U盘名（parts.size() >= 3），则使用它
+        // If the USB disk name is provided (parts.size() >= 3), use it
         if (parts.size() >= 3)
         {
             usbName = parts[2].trimmed();
@@ -1331,7 +1331,7 @@ void MainWindow::onMessageReceived(const QString &message)
     else if (parts[0].trimmed() == "DeleteFile")
     {
         Logger::Log("DeleteFile ...", LogLevel::DEBUG, DeviceType::MAIN);
-        QString ImagePathString = message; // 创建副本
+        QString ImagePathString = message; // Create a copy
         ImagePathString.replace("DeleteFile:", "");
 
         QStringList ImagePath = parseString(ImagePathString.toStdString(), ImageSaveBasePath);
@@ -1354,8 +1354,8 @@ void MainWindow::onMessageReceived(const QString &message)
     else if (parts[0].trimmed() == "GetUSBFiles")
     {
         Logger::Log("GetUSBFiles ...", LogLevel::DEBUG, DeviceType::MAIN);
-        // 格式：GetUSBFiles:usb_name:relativePath
-        // 两个参数都是必需的：U盘名和相对路径
+        // Format: GetUSBFiles:usb_name:relativePath
+        // Both parameters are required: USB disk name and relative path
         QString usbName = QString();
         QString relativePath = QString();
         
@@ -1366,12 +1366,12 @@ void MainWindow::onMessageReceived(const QString &message)
         }
         else if (parts.size() >= 2)
         {
-            // 如果只有两个部分，可能是旧格式兼容，但需要两个参数
+            // If there are only two parts, it may be that the old format is compatible, but requires two parameters
             usbName = parts[1].trimmed();
-            relativePath = ""; // 空字符串，但函数内部会检查
+            relativePath = ""; // Empty string, but the function checks internally
         }
         
-        // 直接调用，GetUSBFiles函数内部会验证参数
+        // Called directly, the parameters will be verified internally in the get usb files function.
         GetUSBFiles(usbName, relativePath);
         Logger::Log("GetUSBFiles finish!", LogLevel::DEBUG, DeviceType::MAIN);
     }
@@ -1379,12 +1379,12 @@ void MainWindow::onMessageReceived(const QString &message)
     else if (parts[0].trimmed() == "ReadImageFile")
     {
         Logger::Log("ReadImageFile ...", LogLevel::DEBUG, DeviceType::MAIN);
-        QString ImagePath = message; // 创建副本
+        QString ImagePath = message; // Create a copy
         ImagePath.replace("ReadImageFile:", "image/");
-        // ImagePath.replace(" ", "\\ "); // 转义空格
-        // ImagePath.replace("[", "\\["); // 转义左方括号
-        // ImagePath.replace("]", "\\]"); // 转义右方括号
-        // ImagePath.replace(",", "\\,"); // 转义逗号
+        // ImagePath.replace(" ", "\\ "); //Escape spaces
+        // ImagePath.replace("[", "\\["); //Escape the left square bracket
+        // ImagePath.replace("]", "\\]"); //Escape the right square bracket
+        // ImagePath.replace(",", "\\,"); //escape commas
         saveFitsAsPNG(ImagePath, false);
         Logger::Log("ReadImageFile finish!", LogLevel::DEBUG, DeviceType::MAIN);
     }
@@ -1520,27 +1520,27 @@ void MainWindow::onMessageReceived(const QString &message)
     else if (parts.size() == 2 && parts[0].trimmed() == "SetMainCameraSaveFolder")
     {
         QString Mode = parts[1].trimmed();
-        if(Mode == "local" || Mode == "default") {  // 兼容旧的"default"
+        if(Mode == "local" || Mode == "default") {  // Compatible with old "default"
             ImageSaveBaseDirectory = QString::fromStdString(ImageSaveBasePath);
             saveMode = "local";
             Logger::Log("Set MainCamera Save Folder to local: " + ImageSaveBaseDirectory.toStdString(), LogLevel::INFO, DeviceType::MAIN);
         } else {
-            // 根据U盘名从映射表获取路径
+            // Get the path from the mapping table based on the USB disk name
             if (usbMountPointsMap.contains(Mode)) {
                 QString usb_mount_point = usbMountPointsMap[Mode];
                 QString folderName = "QUARCS_ImageSave";
                 ImageSaveBaseDirectory = usb_mount_point + "/" + folderName;
-                saveMode = Mode;  // 保存U盘名
+                saveMode = Mode;  // Save USB disk name
                 Logger::Log("Set MainCamera Save Folder to USB: " + Mode.toStdString() + " -> " + ImageSaveBaseDirectory.toStdString(), LogLevel::INFO, DeviceType::MAIN);
             } else {
-                // U盘不存在，回退到默认路径
+                // The USB disk does not exist, fall back to the default path.
                 ImageSaveBaseDirectory = QString::fromStdString(ImageSaveBasePath);
                 saveMode = "local";
                 Logger::Log("Set MainCamera Save Folder: USB '" + Mode.toStdString() + "' not found, using local", LogLevel::WARNING, DeviceType::MAIN);
                 emit wsThread->sendMessageToClient("CaptureImageSaveStatus:USB-NotAvailable");
             }
         }
-        // 保存时统一使用"local"替代"default"
+        // Use "local" instead of "default" when saving
         QString saveValue = (Mode == "default") ? "local" : Mode;
         Tools::saveParameter("MainCamera", "Save Folder", saveValue);
     }
@@ -1574,12 +1574,12 @@ void MainWindow::onMessageReceived(const QString &message)
         emit wsThread->sendMessageToClient("QTClientVersion:" + QString::fromStdString(QT_Client_Version));
     }
 
-    // 获取总版本号（来自环境变量 QUARCS_TOTAL_VERSION，格式 x.x.x）
+    // Get the total version number (from the environment variable QUARCS_TOTAL_VERSION, format x.x.x)
     else if (message == "getTotalVersion")
     {
         Logger::Log("getTotalVersion ...", LogLevel::DEBUG, DeviceType::MAIN);
 
-        // 从环境变量中读取总版本号，未设置时回退到 0.0.0
+        // Read the total version number from the environment variable, falling back to 0.0.0 if not set
         QByteArray envVersion = qgetenv("QUARCS_TOTAL_VERSION");
         QString totalVersion = envVersion.isEmpty() ? "0.0.0" : QString::fromUtf8(envVersion);
 
@@ -1864,7 +1864,7 @@ void MainWindow::onMessageReceived(const QString &message)
             {
                 localAppVersion = parts[4].trimmed();
             }
-            // Logger::Log("1-----------初始参数设置: " + localLat.toStdString() + "," + localLon.toStdString(), LogLevel::DEBUG, DeviceType::MAIN);
+            // Logger::Log("1-----------Initial parameter settings: " + localLat.toStdString() + "," + localLon.toStdString(), LogLevel::DEBUG, DeviceType::MAIN);
             if (parts[3].trimmed() == "zh")
             {
                 setClientSettings("ClientLanguage", "cn");
@@ -1880,7 +1880,7 @@ void MainWindow::onMessageReceived(const QString &message)
         }
         else
         {
-            // Logger::Log("1------------恢复浏览器状态 ...", LogLevel::DEBUG, DeviceType::MAIN);
+            // Logger::Log("1------------Restore browser status...", LogLevel::DEBUG, DeviceType::MAIN);
             emit wsThread->sendMessageToClient("localMessage:" + localLat + ":" + localLon + ":" + localLanguage);
         }
     }
@@ -1928,7 +1928,7 @@ void MainWindow::onMessageReceived(const QString &message)
         bool isSuccess = initPolarAlignment();
         if (isSuccess)
         {
-            // 启动自动极轴校准前，先关闭赤道仪跟踪
+            // Before starting automatic polar alignment, turn off equatorial mount tracking.
             bool trackingDisabled = false;
             if (indi_Client != nullptr && dpMount != nullptr)
             {
@@ -1948,7 +1948,7 @@ void MainWindow::onMessageReceived(const QString &message)
                 Logger::Log("StartAutoPolarAlignment: Failed to start polar alignment", LogLevel::ERROR, DeviceType::MAIN);
                 emit wsThread->sendMessageToClient("StartAutoPolarAlignmentStatus:false:Failed to start polar alignment");
 
-                // 启动失败时恢复之前的跟踪状态
+                // Restore previous tracking state when startup fails
                 if (trackingDisabled && indi_Client != nullptr && dpMount != nullptr)
                 {
                     indi_Client->setTelescopeTrackEnable(dpMount, true);
@@ -2013,11 +2013,11 @@ void MainWindow::onMessageReceived(const QString &message)
         {
             if (polarAlignment->isRunning())
             {
-                // 1.获取当前状态
+                // 1. Get the current status
                 PolarAlignmentState currentState = polarAlignment->getCurrentState();
-                // 2.获取当前信息
+                // 2. Get current information
                 QString currentStatusMessage = polarAlignment->getCurrentStatusMessage();
-                // 3.获取当前进度
+                // 3. Get the current progress
                 int progressPercentage = polarAlignment->getProgressPercentage();
                 emit wsThread->sendMessageToClient(QString("PolarAlignmentState:") +
                                                         (polarAlignment->isRunning() ? "true" : "false") + ":" +
@@ -2025,7 +2025,7 @@ void MainWindow::onMessageReceived(const QString &message)
                                                         currentStatusMessage + ":" +
                                                         QString::number(progressPercentage));
 
-                // 4.获取当前所有可控数据
+                // 4. Obtain all currently controllable data
                 polarAlignment->sendValidAdjustmentGuideData();
             }
         }else{
@@ -2047,7 +2047,7 @@ void MainWindow::onMessageReceived(const QString &message)
         bool clearCache = true;
         bool clearUpdatePack = false;
         bool clearBackup = false;
-        // 支持形如 ClearBoxCache:1:0:1 的扩展协议
+        // Supports extended protocols in the form ClearBoxCache:1:0:1
         if (parts.size() >= 4)
         {
             clearCache      = (parts[1].trimmed() != "0");
@@ -2091,7 +2091,7 @@ void MainWindow::initINDIServer()
     }
     // glIndiServer->setReadChannel(QProcess::StandardOutput);
 
-    // // 连接信号到槽函数
+    // Connect signal to slot function
     // connect(glIndiServer, &QProcess::readyReadStandardOutput, this, &MainWindow::handleIndiServerOutput);
     // connect(glIndiServer, &QProcess::readyReadStandardError, this, &MainWindow::handleIndiServerError);
     QString program = "indiserver";
@@ -2123,14 +2123,14 @@ void MainWindow::initINDIServer()
 //     glIndiServer->start("indiserver -f /tmp/myFIFO -v -p 7624");
 // }
 
-// 槽函数：处理标准输出
+// Slot function: processing standard output
 void MainWindow::handleIndiServerOutput()
 {
     QByteArray output = glIndiServer->readAllStandardOutput();
     Logger::Log("INDI Server Output: " + output.toStdString(), LogLevel::INFO, DeviceType::MAIN);
 }
 
-// 槽函数：处理标准错误
+// Slot function: handling standard error
 void MainWindow::handleIndiServerError()
 {
     QByteArray error = glIndiServer->readAllStandardError();
@@ -2147,7 +2147,7 @@ void MainWindow::initINDIClient()
     indi_Client->setImageReceivedCallback(
         [this](const std::string &filename, const std::string &devname)
         {
-            // 曝光完成
+            // Exposure completed
             if (dpMainCamera != NULL)
             {
                 if (dpMainCamera->getDeviceName() == devname)
@@ -2188,7 +2188,7 @@ void MainWindow::initINDIClient()
                         // saveFitsAsPNG("/home/quarcs/2025_06_26T08_24_13_544.fits", true);
                         // saveFitsAsPNG("/dev/shm/SOLVETEST.fits", true);
                         
-                        // 如果自动保存开启，自动保存图像
+                        // Automatically saves images if autosave is on
                         if (mainCameraAutoSave && isScheduleRunning == false)
                         {
                             Logger::Log("Auto Save enabled, saving captured image...", LogLevel::INFO, DeviceType::MAIN);
@@ -2202,7 +2202,7 @@ void MainWindow::initINDIClient()
 
                         Logger::Log("saveFitsAsJPG", LogLevel::DEBUG, DeviceType::MAIN);
                     }
-                    // Logger::Log("拍摄完成，图像保存完成 finish!", LogLevel::INFO, DeviceType::MAIN);
+                    // Logger::Log("Photography completed, image saving completed finish!", LogLevel::INFO, DeviceType::MAIN);
                 }
             }
         });
@@ -2211,29 +2211,29 @@ void MainWindow::initINDIClient()
     indi_Client->setMessageReceivedCallback(
         [this](const std::string &message)
         {
-            // qDebug("indi初始信息 %s", message.c_str());
+            // qDebug("indi initial message %s", message.c_str());
             QString messageStr = QString::fromStdString(message.c_str());
 
-            // 使用正则表达式移除时间戳
+            // Remove timestamps using regular expressions
             std::regex timestampRegex(R"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}: )");
             messageStr = QString::fromStdString(std::regex_replace(messageStr.toStdString(), timestampRegex, ""));
 
-            // qDebug("indi提取后信息 %s", messageStr.toStdString().c_str());
-            // 使用正则表达式提取并移除日志类型
+            // qDebug("indi extracted information %s", messageStr.toStdString().c_str());
+            // Extract and remove log types using regular expressions
             std::regex typeRegex(R"(\[(INFO|WARNING|ERROR)\])");
             std::smatch typeMatch;
             QString logType;
             if (std::regex_search(message, typeMatch, typeRegex) && typeMatch.size() > 1)
             {
                 logType = QString::fromStdString(typeMatch[1].str());
-                // 移除日志类型
+                // Remove log type
                 messageStr = QString::fromStdString(std::regex_replace(messageStr.toStdString(), typeRegex, ""));
             }
 
             if (messageStr.contains("Telescope focal length is missing.") ||
                 messageStr.contains("Telescope aperture is missing."))
             {
-                // 跳过打印
+                // Skip printing
                 return;
             }
             if (logType == "WARNING")
@@ -2271,10 +2271,10 @@ void MainWindow::initINDIClient()
 
 DeviceType MainWindow::getDeviceTypeFromPartialString(const std::string &typeStr)
 {
-    // 使用find()方法检查字符串中是否包含特定的子字符串
+    // Use the find() method to check if a string contains a specific substring
     if (typeStr.find("Exposure done, downloading image") != std::string::npos || typeStr.find("Download complete") != std::string::npos || typeStr.find("Uploading file.") != std::string::npos || typeStr.find("Image saved to") != std::string::npos)
     {
-        // Logger::Log("获取的信息类型是相机", LogLevel::INFO, DeviceType::CAMERA);
+        // Logger::Log("The information type obtained is camera", LogLevel::INFO, DeviceType::CAMERA);
         return DeviceType::CAMERA;
     }
     else if (0)
@@ -2432,7 +2432,7 @@ void MainWindow::onTimeout()
 {
     ShowPHDdata();
 
-    // 显示赤道仪指向
+    // Show equatorial mount pointing
     mountDisplayCounter++;
     if (dpMount != NULL)
     {
@@ -2449,9 +2449,9 @@ void MainWindow::onTimeout()
                     + QString::number(CurrentRA_Degree) 
                     + ":" + QString::number(CurrentDEC_Degree));
 
-                // Logger::Log("当前指向:RA:" + std::to_string(RA_HOURS) + " 小时,DEC:" + std::to_string(CurrentDEC_Degree) + " 度", LogLevel::INFO, DeviceType::MAIN);
+                // Logger::Log("Currently pointing to:RA:" + std::to_string(RA_HOURS) + "Hours,DEC:" + std::to_string(CurrentDEC_Degree) + "Degree", LogLevel::INFO, DeviceType::MAIN);
 
-                // 直接每次执行原"慢速"查询内容
+                // Directly execute the original "slow" query content each time
                 bool isParked = false;
                 indi_Client->getTelescopePark(dpMount, isParked);
                 emit wsThread->sendMessageToClient(
@@ -2461,7 +2461,7 @@ void MainWindow::onTimeout()
                 indi_Client->getTelescopePierSide(dpMount, NewTelescopePierSide);
                 if (NewTelescopePierSide != TelescopePierSide)
                 {
-                    // 出现方向侧变化,此时意味着进行了中天翻转,判断是否完成翻转
+                    // If there is a side change in direction, it means that a mid-heaven flip has occurred. Determine whether the flip is completed.
                     if (indi_Client->mountState.isMovingNow() == false) {
                         emit wsThread->sendMessageToClient("FlipStatus:success");
                         TelescopePierSide = NewTelescopePierSide;
@@ -2488,22 +2488,22 @@ void MainWindow::onTimeout()
 
                 mountDisplayCounter = 0;
 
-                // const MeridianStatus ms = checkMeridianStatus(); // 这个计算当前距离中天的时间
+                // const MeridianStatus ms = checkMeridianStatus(); //This calculates the current time from midday
                 // switch (ms.event) {
                 //   case FlipEvent::Started: emit wsThread->sendMessageToClient("MeridianFlip:STARTED"); break;
-                //   case FlipEvent::Done:    emit wsThread->sendMessageToClient("MeridianFlip:DONE");    break;
-                //   case FlipEvent::Failed:  emit wsThread->sendMessageToClient("MeridianFlip:FAILED");  break;
+                //   case FlipEvent::Done: emit wsThread->sendMessageToClient("MeridianFlip:DONE"); break;
+                //   case FlipEvent::Failed: emit wsThread->sendMessageToClient("MeridianFlip:FAILED"); break;
                 //   default: break;
                 // }
 
                 // if (!std::isnan(ms.etaMinutes)) {
-                //     // 显示规则：与翻转需求绑定 —— 需要翻转显示负号，不需要显示正号
+                //     // Display rules: bound to flipping requirements -negative signs need to be flipped and displayed, but positive signs do not need to be displayed
                 //     const bool showNeg = ms.needsFlip;
                 //     const double absMinutes = std::fabs(ms.etaMinutes);
-                //     const int totalSeconds = static_cast<int>(std::llround(absMinutes * 60.0));
-                //     const int hours = totalSeconds / 3600;
-                //     const int mins  = (totalSeconds % 3600) / 60;
-                //     const int secs  = totalSeconds % 60;
+                //     const int totalSeconds = static_cast<int>(std::llround(absMinutes *60.0));
+                //     const int hours = totalSeconds /3600;
+                //     const int mins = (totalSeconds % 3600) /60;
+                //     const int secs = totalSeconds % 60;
 
                 //     const QString hms = QString("%1%2:%3:%4")
                 //                             .arg(showNeg ? "-" : "")
@@ -2514,10 +2514,10 @@ void MainWindow::onTimeout()
                 //     Logger::Log("MeridianETA_hms:" + hms.toStdString() + " side:" + TelescopePierSide.toStdString() + " needflip:" + (ms.needsFlip ? "true" : "false"), LogLevel::INFO, DeviceType::MAIN);
                 // }
 
-                //TODO:当前判断方式存在问题,需要重新修改判断
-                // 加入判断,当此时需要执行自动中天翻转,且设备设置为自动中天翻转,则执行自动中天翻转
+                //TODO: There is a problem with the current judgment method and the judgment needs to be revised.
+                // Add judgment. When it is necessary to perform automatic mid-heaven flip at this time, and the device is set to automatic mid-heaven flip, then perform automatic mid-heaven flip.
                 // if (ms.needsFlip && isAutoFlip && indi_Client->mountState.isFlipping == false && indi_Client->mountState.isFlipBacking == false) {
-                //     // 预备翻转
+                //     // Ready to flip
                 //     if (flipPrepareTime >= 0) {
                 //         flipPrepareTime-=2;
                 //         emit wsThread->sendMessageToClient("FlipStatus:FlipPrepareTime," + QString::number(flipPrepareTime));
@@ -2563,45 +2563,45 @@ MeridianStatus MainWindow::checkMeridianStatus()
     if (!dpMount || !dpMount->isConnected())
         return out;
 
-    // 读 PierSide（设备上报的方向侧）
+    // Read PierSide (the direction side reported by the device)
     QString pier = "UNKNOWN";
     indi_Client->getTelescopePierSide(dpMount, pier); // "EAST"/"WEST"/"UNKNOWN"
 
-    // -------- 过中天 ETA（分钟）--------
-    // 1) 当前赤经（小时）
+    // --------Midday ETA (minutes) --------
+    // 1) Current right ascension (hour)
     double raH = 0.0, decDeg = 0.0;
     indi_Client->getTelescopeRADECJNOW(dpMount, raH, decDeg);
 
-    // 2) LST 小时（优先 TIME_LST；否则 UTC+经度估算）
+    // 2) LST hours (TIME_LST takes precedence; otherwise UTC+longitude estimate)
     auto norm24 = [](double h){ h=fmod(h,24.0); if(h<0) h+=24.0; return h; };
-    // 将可能的度/秒等单位推断并统一为小时，再规范到 [0,24)
+    // Extrapolate and unify possible units such as degrees/second to hours, and then normalize to [0,24)
     auto toHours = [&](double v)->double {
         if (std::isnan(v)) return v;
         double x = v;
-        // 若为秒（0..86400），转换为小时
+        // If it is seconds (0..86400), convert to hours
         if (std::fabs(x) > 24.0 && std::fabs(x) <= 86400.0) x /= 3600.0;
-        // 若为度（0..360），转换为小时
+//If it is degrees (0..360), convert to hours
         if (std::fabs(x) > 24.0 && std::fabs(x) <= 360.0)  x /= 15.0;
-        // 若超过一圈（>360 度等），先按度归一后转小时
+        // If it exceeds one circle (>360 degrees, etc.), first normalize by degrees and then turn to hours.
         if (std::fabs(x) > 360.0) x = fmod(x, 360.0) / 15.0;
         return norm24(x);
     };
     double lstH = std::numeric_limits<double>::quiet_NaN();
 
-    // 2.1 用 INDI::PropertyNumber 读取 TIME_LST（避免 p->np 报错）
+    // 2.1 Use INDI::PropertyNumber to read TIME_LST (to avoid p->np errors)
     if (true) {
         INDI::PropertyNumber lst = dpMount->getNumber("TIME_LST");
         if (lst.isValid() && lst.size() > 0) {
-            lstH = toHours(lst[0].getValue());   // 统一为小时
+            lstH = toHours(lst[0].getValue());   // Unified to hours
         }
     }
 
-    // 2.2 若没有 TIME_LST，则从 GEOGRAPHIC_COORD 取经度，用 UTC 算 LST
+    // 2.2 If there is no TIME_LST, get the longitude from GEOGRAPHIC_COORD and use UTC to calculate LST
     if (std::isnan(lstH)) {
         double lonDeg = std::numeric_limits<double>::quiet_NaN();
         INDI::PropertyNumber geo = dpMount->getNumber("GEOGRAPHIC_COORD");
         if (geo.isValid()) {
-            // 通常顺序 LAT(0), LONG(1), ELEV(2)；若你的驱动是命名项，也可用 geo["LONG"].getValue()
+            // The usual order is LAT(0), LONG(1), ELEV(2); if your driver uses named items, you can also use geo["LONG"].getValue()
             if (geo.size() >= 2)
                 lonDeg = geo[1].getValue();
         }
@@ -2618,19 +2618,19 @@ MeridianStatus MainWindow::checkMeridianStatus()
             };
             const double JD = jdUTC(Y,M,D,H,Min,S,ms);
             const double Dd = JD - 2451545.0;
-            double GMST = 18.697374558 + 24.06570982441908 * Dd; // 小时
+            double GMST = 18.697374558 + 24.06570982441908 * Dd; // hour
             lstH = norm24(GMST + lonDeg/15.0);
         }
     }
 
-    // 清洗 RA 单位并规范到小时
+    // Clean RA units and standardize to hours
     raH = toHours(raH);
 
     if (!std::isnan(lstH)) {
-        // 采用半开区间 [-12, 12) 规范时角，避免边界抖动
+        // Use the half-open interval [-12, 12) to normalize the angle and avoid boundary jitter
         auto wrap12 = [](double h){ while (h < -12.0) h += 24.0; while (h >= 12.0) h -= 24.0; return h; };
-        const double haPrincipal = wrap12(lstH - raH); // 小时；<0 东侧，>0 西侧
-        // 连续时角（避免在下中天处从 -12h 跳到 +12h 导致符号翻转）
+        const double haPrincipal = wrap12(lstH - raH); // Hours; <0 East side, >0 West side
+        // Continuous hour angle (prevents sign changes when moving from -12h to +12h at lower culmination)
         static bool hasContHA = false;
         static double contHA = 0.0;
         static double lastHAPrincipal = 0.0;
@@ -2647,27 +2647,27 @@ MeridianStatus MainWindow::checkMeridianStatus()
         }
         const bool isPastUpper = (haPrincipal > 0.0);
 
-        // HOME 位也参与翻转判断（不特殊抑制）
+        // HOME position also participates in flip detection (no special suppression)
 
-        // 基于 |HA|=6h 分割（注意：这里的 6h 是时角 HA，不是 RA）：
-        // - 上中天半周区间 |HA| < 6h：  HA ≥ 0 → EAST，HA < 0 → WEST
-        // - 下中天半周区间 |HA| ≥ 6h：  映射取反（对称关系）
+        // Based on |HA| = 6h division (Note: the 6h here is hour angle HA, not RA):
+        // - Upper meridian half-period |HA| < 6h: HA ≥ 0 → EAST, HA < 0 → WEST
+        // - Lower meridian half-period |HA| ≥ 6h: reverse mapping (symmetry relation)
         constexpr double kHalfCycleHAHours = 6.0;
-        constexpr double kBoundaryTolH = 0.02; // ≈1.2 分钟容差
+        constexpr double kBoundaryTolH = 0.02; // ≈1.2 minutes tolerance
         const bool isLowerRegion = (std::fabs(haPrincipal) >= (kHalfCycleHAHours - kBoundaryTolH));
         bool eastMapping = (haPrincipal >= 0.0);
         if (isLowerRegion) eastMapping = !eastMapping;
         QString theoreticalPier = eastMapping ? "EAST" : "WEST";
         if (pier == "UNKNOWN") {
-            out.needsFlip = false; // 无法判断或靠近极区：不触发翻转
+            out.needsFlip = false; // Cannot determine or approach polar regions: do not trigger flipping
         } else {
             out.needsFlip = (pier != theoreticalPier);
         }
 
-        // ETA：严格按连续时角符号（未过为正，已过为负），避免下中天跳变
+        // ETA: Strictly follow the continuous time-phase notation (positive if not passed, negative if passed) to avoid sudden jumps around the midpoint.
         out.etaMinutes = (-contHA) * 60.0;
 
-        // 注意：needsFlip 已在上面根据 nearPole 与理论 Pier 计算完毕
+        // Note: needsFlip has already been calculated above based on nearPole and the theoretical Pier
     }
 
     return out;
@@ -2705,7 +2705,7 @@ MeridianStatus MainWindow::checkMeridianStatus()
 //     }
 
 //     if(FWHM != -1){
-//         // 在原图上绘制检测结果
+//         // Draw detection results on the original image
 //         cv::Point center(stars[0].x, stars[0].y);
 //         cv::circle(image16, center, static_cast<int>(FWHM), cv::Scalar(0, 0, 255), 1); // Draw HFR circle
 //         cv::circle(image16, center, 1, cv::Scalar(0, 255, 0), -1);                     // Draw center point
@@ -2723,14 +2723,14 @@ MeridianStatus MainWindow::checkMeridianStatus()
 //     QString uniqueId = QUuid::createUuid().toString();
 //     Logger::Log("Unique ID generated for new image.", LogLevel::INFO, DeviceType::GUIDER);
 
-//     // 列出所有以"CaptureImage"为前缀的文件
+//     // List all files with the prefix 'CaptureImage'
 //     QDir directory(QString::fromStdString(vueDirectoryPath));
 //     QStringList filters;
-//     filters << "CaptureImage*.jpg"; // 使用通配符来筛选以"CaptureImage"为前缀的jpg文件
+//     filters << "CaptureImage*.jpg"; // Use a wildcard to filter jpg files with the prefix "CaptureImage"
 //     QStringList fileList = directory.entryList(filters, QDir::Files);
 //     Logger::Log("Existing image files listed for deletion.", LogLevel::INFO, DeviceType::GUIDER);
 
-//     // 删除所有匹配的文件
+//     // Delete all matching files
 //     for (const auto &file : fileList)
 //     {
 //         QString filePath = QString::fromStdString(vueDirectoryPath) + file;
@@ -2738,13 +2738,13 @@ MeridianStatus MainWindow::checkMeridianStatus()
 //     }
 //     Logger::Log("Old image files deleted.", LogLevel::INFO, DeviceType::GUIDER);
 
-//     // 删除前一张图像文件
+//     // Delete the previous image file
 //     if (PriorROIImage != "NULL") {
 //         QFile::remove(QString::fromStdString(PriorROIImage));
 //         Logger::Log("Previous ROI image deleted.", LogLevel::INFO, DeviceType::GUIDER);
 //     }
 
-//     // 保存新的图像带有唯一ID的文件名
+//     // Save the new image with a filename that has a unique ID
 //     std::string fileName = "CaptureImage_" + uniqueId.toStdString() + ".jpg";
 //     std::string filePath = vueDirectoryPath + fileName;
 //     bool saved = cv::imwrite(filePath, SendImage);
@@ -2777,10 +2777,10 @@ MeridianStatus MainWindow::checkMeridianStatus()
 //                     LineData.append(QPointF(x, y));
 //                 }
 
-//                 // 计算导数为零的 x 坐标
+//                 // Calculate the x-coordinate where the derivative is zero
 //                 float x_min = -b / (2 * a);
 //                 minPoint_X = x_min;
-//                 // 计算最小值点的 y 坐标
+//                 // Calculate the y-coordinate of the minimum point
 //                 float y_min = a * x_min * x_min + b * x_min + c;
 
 //                 QString dataString;
@@ -2831,7 +2831,7 @@ int MainWindow::saveFitsAsPNG(QString fitsFileName, bool ProcessBin)
         return -1;
     }
 
-    // 中值滤波
+    // Median blur
     Logger::Log("Starting median blur...", LogLevel::INFO, DeviceType::CAMERA);
     cv::medianBlur(originalImage16, originalImage16, 3);
     Logger::Log("Median blur applied successfully.", LogLevel::INFO, DeviceType::CAMERA);
@@ -2841,7 +2841,7 @@ int MainWindow::saveFitsAsPNG(QString fitsFileName, bool ProcessBin)
 
     if (ProcessBin && glMainCameraBinning != 1)
     {
-        // 使用新的Mat版本的PixelsDataSoftBin_Bayer函数
+        // Use the PixelsDataSoftBin_Bayer function with the new Mat version
         if (MainCameraCFA == "RGGB" || MainCameraCFA == "RG")
         {
             image16 = Tools::PixelsDataSoftBin_Bayer(originalImage16, glMainCameraBinning, glMainCameraBinning, BAYER_RGGB);
@@ -2918,7 +2918,7 @@ int MainWindow::saveFitsAsPNG(QString fitsFileName, bool ProcessBin)
     }
     Logger::Log("Old binary files deleted.", LogLevel::INFO, DeviceType::CAMERA);
 
-    // 删除前一张图像文件
+    // Delete the previous image file
     if (PriorCaptureImage != "NULL")
     {
         QFile::remove(QString::fromStdString(PriorCaptureImage));
@@ -2936,7 +2936,7 @@ int MainWindow::saveFitsAsPNG(QString fitsFileName, bool ProcessBin)
         throw std::runtime_error("Failed to open file for writing.");
     }
 
-    // 在写入文件之前，保存图像大小
+    /Save the image size before writing to the file
     int showImageSizeX = width;
     int showImageSizeY = height;
 
@@ -3040,18 +3040,18 @@ void MainWindow::saveGuiderImageAsJPG(cv::Mat Image)
 {
     Logger::Log("Starting to save guider image as JPG...", LogLevel::INFO, DeviceType::GUIDER);
 
-    // 生成唯一ID
+    // Generate unique ID
     QString uniqueId = QUuid::createUuid().toString();
     Logger::Log("Generated unique ID for new guider image: " + uniqueId.toStdString(), LogLevel::INFO, DeviceType::GUIDER);
 
-    // 列出所有以"GuiderImage"为前缀的文件
+    // List all files with the prefix 'GuiderImage'
     QDir directory(QString::fromStdString(vueDirectoryPath));
     QStringList filters;
-    filters << "GuiderImage*.jpg"; // 使用通配符来筛选以"GuiderImage"为前缀的jpg文件
+    filters << "GuiderImage*.jpg"; // Use a wildcard to filter jpg files with the prefix 'GuiderImage'
     QStringList fileList = directory.entryList(filters, QDir::Files);
     Logger::Log("Listed existing guider images for deletion.", LogLevel::INFO, DeviceType::GUIDER);
 
-    // 删除所有匹配的文件
+   // Delete all matching files
     for (const auto &file : fileList)
     {
         QString filePath = QString::fromStdString(vueDirectoryPath) + file;
@@ -3059,14 +3059,14 @@ void MainWindow::saveGuiderImageAsJPG(cv::Mat Image)
         Logger::Log("Deleted guider image file: " + filePath.toStdString(), LogLevel::INFO, DeviceType::GUIDER);
     }
 
-    // 删除前一张图像文件
+   // Delete the previous image file
     if (PriorGuiderImage != "NULL")
     {
         QFile::remove(QString::fromStdString(PriorGuiderImage));
         Logger::Log("Deleted previous guider image file: " + PriorGuiderImage, LogLevel::INFO, DeviceType::GUIDER);
     }
 
-    // 保存新的图像带有唯一ID的文件名
+   // Save the new image with a filename that has a unique ID
     std::string fileName = "GuiderImage_" + uniqueId.toStdString() + ".jpg";
     std::string filePath = vueDirectoryPath + fileName;
     bool saved = cv::imwrite(filePath, Image);
@@ -3299,7 +3299,7 @@ bool MainWindow::indi_Driver_Confirm(QString DriverName, QString BaudRate)
     switch (systemdevicelist.currentDeviceCode)
     {
     case 0:
-        // 修复：检查currentDeviceCode索引是否有效
+        // Fix: Check if the currentDeviceCode index is valid
         if (systemdevicelist.system_devices.size() > systemdevicelist.currentDeviceCode) {
             systemdevicelist.system_devices[systemdevicelist.currentDeviceCode].Description = "Mount";
             systemdevicelist.system_devices[systemdevicelist.currentDeviceCode].BaudRate = BaudRate.toInt();
@@ -3348,7 +3348,7 @@ bool MainWindow::indi_Driver_Confirm(QString DriverName, QString BaudRate)
         break;
     }
 
-    // 修复：检查索引有效性后再访问
+    // Fix: check index validity before accessing
     if (systemdevicelist.system_devices.size() > systemdevicelist.currentDeviceCode) {
         systemdevicelist.system_devices[systemdevicelist.currentDeviceCode].DriverIndiName = DriverName;
     } else {
@@ -3359,7 +3359,7 @@ bool MainWindow::indi_Driver_Confirm(QString DriverName, QString BaudRate)
 
 bool MainWindow::indi_Driver_Clear()
 {
-    // 修复：检查索引有效性
+    // Fix: check index validity
     if (systemdevicelist.system_devices.size() > systemdevicelist.currentDeviceCode) {
         systemdevicelist.system_devices[systemdevicelist.currentDeviceCode].Description = "";
         systemdevicelist.system_devices[systemdevicelist.currentDeviceCode].DriverIndiName = "";
@@ -3447,7 +3447,7 @@ void MainWindow::ConnectAllDeviceOnce()
 {
     Logger::Log("Connecting all devices once.", LogLevel::INFO, DeviceType::MAIN);
     
-    // 防御性检查：确保 indi_Client 已经初始化
+    // Defensive check: Ensure indi_Client has been initialized
     if (indi_Client == nullptr)
     {
         Logger::Log("ConnectAllDeviceOnce | indi_Client is nullptr", LogLevel::ERROR, DeviceType::MAIN);
@@ -3511,7 +3511,7 @@ void MainWindow::ConnectAllDeviceOnce()
 
     sleep(1);
 
-    // 再次防御性检查，避免空指针解引用
+    // Defensive check again to avoid null pointer dereference
     if (indi_Client == nullptr)
     {
         Logger::Log("ConnectAllDeviceOnce | indi_Client became nullptr before server check", LogLevel::ERROR, DeviceType::MAIN);
@@ -3527,11 +3527,11 @@ void MainWindow::ConnectAllDeviceOnce()
     }
 
     QTimer *timer = new QTimer(this);
-    timer->setInterval(1000); // 设置定时器间隔为1000毫秒
+    timer->setInterval(1000); // Set the timer interval to 1000 milliseconds
     int time = 0;
     connect(timer, &QTimer::timeout, this, [this, timer, &time]()
             {
-        // 防御性检查：避免 indi_Client 为空导致段错误
+        // Defensive check: prevent segmentation fault caused by indi_Client being null
         if (indi_Client == nullptr) {
             Logger::Log("ConnectAllDeviceOnce | indi_Client is nullptr in timer callback", LogLevel::ERROR, DeviceType::MAIN);
             timer->stop();
@@ -3544,7 +3544,7 @@ void MainWindow::ConnectAllDeviceOnce()
             timer->stop();
             timer->deleteLater();
             sleep(2);
-            continueConnectAllDeviceOnce(); // 继续执行设备连接的剩余部分
+            continueConnectAllDeviceOnce(); // Continue executing the remaining part of the device connection
         } else {
             Logger::Log("Waiting for devices...", LogLevel::INFO, DeviceType::MAIN);
             time++;
@@ -3553,7 +3553,7 @@ void MainWindow::ConnectAllDeviceOnce()
 }
 void MainWindow::continueConnectAllDeviceOnce()
 {
-    // 防御性检查：确保 indi_Client 有效
+    // Defensive check: Ensure indi_Client is valid
     if (indi_Client == nullptr)
     {
         Logger::Log("continueConnectAllDeviceOnce | indi_Client is nullptr", LogLevel::ERROR, DeviceType::MAIN);
@@ -3572,12 +3572,12 @@ void MainWindow::continueConnectAllDeviceOnce()
         return;
     }
 
-    // 辅助函数：根据 INDI 设备找到对应的 SystemDevice 槽位，并返回应使用的波特率
+    // Helper function: Find the corresponding SystemDevice slot based on the INDI device and return the baud rate to use
     auto getBaudRateForDeviceIndex = [this](INDI::BaseDevice *device, int deviceIndex) -> int
     {
         int defaultBaud = 9600;
 
-        // 先使用原来基于索引的逻辑（保持兼容性）
+        // First, use the original index-based logic (to maintain compatibility)
         if (deviceIndex >= 0 && deviceIndex < systemdevicelist.system_devices.size())
         {
             defaultBaud = systemdevicelist.system_devices[deviceIndex].BaudRate;
@@ -3586,7 +3586,7 @@ void MainWindow::continueConnectAllDeviceOnce()
         if (device == nullptr)
             return defaultBaud;
 
-        // 再尝试根据 driver 名称在 systemdevicelist 中精确匹配
+        // Try again to match exactly in systemdevicelist based on the driver name
         QString driverExec = QString::fromUtf8(device->getDriverExec());
         for (int idx = 0; idx < systemdevicelist.system_devices.size(); idx++)
         {
@@ -3601,17 +3601,17 @@ void MainWindow::continueConnectAllDeviceOnce()
 
     for (int i = 0; i < indi_Client->GetDeviceCount(); i++)
     {
-        // 修复：检查系统设备列表索引是否有效
+        // Fix: Check if the system device list index is valid
         if (i >= systemdevicelist.system_devices.size()) {
             Logger::Log("ConnectAllDeviceOnce | Index " + std::to_string(i) + " out of bounds for systemdevicelist (size: " + std::to_string(systemdevicelist.system_devices.size()) + ")", LogLevel::ERROR, DeviceType::MAIN);
-            break; // 停止循环，避免越界访问
+            break; // Stop the loop to prevent out-of-bounds access
         }
         
-        // 修复：检查设备指针是否有效
+        // Fix: Check if the device pointer is valid
         INDI::BaseDevice *device = indi_Client->GetDeviceFromList(i);
         if (device == nullptr) {
             Logger::Log("ConnectAllDeviceOnce | Device at index " + std::to_string(i) + " is nullptr", LogLevel::WARNING, DeviceType::MAIN);
-            continue; // 跳过这个设备
+            continue; // Skip this device
         }
         
         std::string deviceName = indi_Client->GetDeviceNameFromList(i);
@@ -3622,8 +3622,8 @@ void MainWindow::continueConnectAllDeviceOnce()
         
         Logger::Log("Start connecting devices:" + deviceName, LogLevel::INFO, DeviceType::MAIN);
 
-        // 在正式连接前，仅在用户手动选择串口时应用覆盖设置；默认模式不改端口
-        // 根据 driverExec 在 systemdevicelist 中查找对应的 DriverType（Mount / Focuser）
+        // Before establishing a formal connection, apply override settings only when the user manually selects the serial port; do not change the port in default mode
+        // Find the corresponding DriverType (Mount / Focuser) in systemdevicelist according to driverExec）
         QString driverExec = QString::fromUtf8(device->getDriverExec());
         QString driverType;
         for (int idx = 0; idx < systemdevicelist.system_devices.size(); idx++)
@@ -3640,8 +3640,8 @@ void MainWindow::continueConnectAllDeviceOnce()
             Logger::Log("ConnectAllDeviceOnce | Focuser initial Port set to: " + focuserSerialPortOverride.toStdString(),
                         LogLevel::INFO, DeviceType::MAIN);
 
-            // 在根据覆盖值设置串口后，同步当前串口与候选列表到前端
-            // 这样前端的串口下拉框会立刻显示实际使用/覆盖的端口
+        // After setting the serial port based on the override value, sync the current serial port with the candidate list to the frontend
+        // This way, the serial port dropdown on the frontend will immediately show the actual used/overridden port
             sendSerialPortOptions(driverType);
         }
         else if (driverType == "Mount" && !mountSerialPortOverride.isEmpty())
@@ -3650,7 +3650,7 @@ void MainWindow::continueConnectAllDeviceOnce()
             Logger::Log("ConnectAllDeviceOnce | Mount initial Port set to: " + mountSerialPortOverride.toStdString(),
                         LogLevel::INFO, DeviceType::MAIN);
 
-            // 在根据覆盖值设置串口后，同步当前串口与候选列表到前端
+        // After setting the serial port based on the override value, synchronize the current serial port and the candidate list to the frontend
             sendSerialPortOptions(driverType);
         }
 
@@ -3664,23 +3664,23 @@ void MainWindow::continueConnectAllDeviceOnce()
         while (device != nullptr && !device->isConnected() && waitTime < 5)
         {
             Logger::Log("Wait for Connect" + deviceName, LogLevel::INFO, DeviceType::MAIN);
-            QThread::msleep(1000); // 等待1秒
+            QThread::msleep(1000); // wait 1 second
             waitTime++;
         }
 
         if (device == nullptr || !device->isConnected())
         {
             Logger::Log("ConnectDriver | Device (" + deviceName + ") is not connected,try to update port", LogLevel::WARNING, DeviceType::MAIN);
-            // 特殊处理(电调和赤道仪)
-            // 修复：使用已检查的device指针，避免重复调用GetDeviceFromList
+            // Special handling (focuser and mount)
+            // Fix: use the verified device pointer to avoid repeated GetDeviceFromList calls
             if (device != nullptr && (device->getDriverInterface() & INDI::BaseDevice::FOCUSER_INTERFACE || device->getDriverInterface() & INDI::BaseDevice::TELESCOPE_INTERFACE)){
                 QString DevicePort;
                 indi_Client->getDevicePort(device, DevicePort);
                 QString DeviceType = detector.detectDeviceTypeForPort(DevicePort);
 
-                // 获取设备类型
+                // Get device type
                 QString DriverType = "";
-                // 修复：使用已检查的device指针
+                // Fix: use the verified device pointer
                 if (device != nullptr) {
                     for(int j = 0; j < systemdevicelist.system_devices.size(); j++)
                     {
@@ -3689,20 +3689,20 @@ void MainWindow::continueConnectAllDeviceOnce()
                             DriverType = systemdevicelist.system_devices[j].Description;
                         }
                     }
-                    // 处理电调和赤道仪的连接
+                    // Handle connections for focuser and mount
                     if (DeviceType != "Focuser" && DriverType == "Focuser")
                     {
-                        // 识别到当前设备是电调，但是设备的串口不是电调的串口,需更新
-                        // 正确的串口是detector.getFocuserPort()
+                        // Detected device is a focuser but its serial port is not the focuser port; needs updating
+                        // The correct port is detector.getFocuserPort()
                         QString realFocuserPort = detector.getFocuserPort();
                         if (!realFocuserPort.isEmpty())
                         {
                             indi_Client->setDevicePort(device, realFocuserPort);
-                            // 同步更新覆盖值，保证后续连接与前端显示一致
+                            // Update override value synchronously to keep subsequent connections and frontend display consistent
                             focuserSerialPortOverride = realFocuserPort;
                             Logger::Log("ConnectDriver | Focuser Device (" + std::string(device->getDeviceName()) + ") Port is updated to: " + realFocuserPort.toStdString(), LogLevel::INFO, DeviceType::MAIN);
 
-                            // 自动纠正串口后，同步当前串口与候选列表到前端
+                            // After auto-correcting the port, sync the current port with the candidate list to the frontend
                             sendSerialPortOptions(DriverType);
                         }
                         else
@@ -3712,17 +3712,17 @@ void MainWindow::continueConnectAllDeviceOnce()
                         }
                     }else if (DeviceType != "Mount" && DriverType == "Mount")
                     {
-                        // 识别到当前设备是赤道仪，但是设备的串口不是赤道仪的串口,需更新
-                        // 正确的串口是detector.getMountPort()
+                        // Detected device is a mount but its serial port is not the mount port; needs updating
+                        // The correct port is detector.getMountPort()
                         QString realMountPort = detector.getMountPort();
                         if (!realMountPort.isEmpty())
                         {
                             indi_Client->setDevicePort(device, realMountPort);
-                            // 同步更新覆盖值，保证后续连接与前端显示一致
+                            // Update override value synchronously to keep subsequent connections and frontend display consistent
                             mountSerialPortOverride = realMountPort;
                             Logger::Log("ConnectDriver | Mount Device (" + std::string(device->getDeviceName()) + ") Port is updated to: " + realMountPort.toStdString(), LogLevel::INFO, DeviceType::MAIN);
 
-                            // 自动纠正串口后，同步当前串口与候选列表到前端
+                            // After auto-correcting the port, sync the current port with the candidate list to the frontend
                             sendSerialPortOptions(DriverType);
                         }
                         else
@@ -3735,7 +3735,7 @@ void MainWindow::continueConnectAllDeviceOnce()
                     }
                 }
             }
-            // 修复：使用已检查的device指针和deviceName
+            // Fix: use the verified device pointer and deviceName
             if (device != nullptr && !deviceName.empty()) {
                 int retryBaudRate = getBaudRateForDeviceIndex(device, i);
                 Logger::Log("ConnectAllDeviceOnce | retry setBaudRate for device " + deviceName + " -> " + std::to_string(retryBaudRate),
@@ -3746,9 +3746,9 @@ void MainWindow::continueConnectAllDeviceOnce()
                 int waitTime = 0;
                 while (device != nullptr && !device->isConnected() && waitTime < 5)
                 {
-                    // 修复：使用已检查的deviceName变量
+                    // Fix: use the verified deviceName variable
                     Logger::Log("Wait for Connect" + deviceName, LogLevel::INFO, DeviceType::MAIN);
-                    QThread::msleep(1000); // 等待1秒
+                    QThread::msleep(1000); // wait 1 second
                     waitTime++;
                 }
             }
@@ -8606,13 +8606,13 @@ int MainWindow::checkStorageSpaceAndCreateDirectory(const QString &sourcePath,
         
         if (storageInfo.isReadOnly())
         {
-            const QString password = "quarcs";
-            if (!remountReadWrite(usb_mount_point, password))
-            {
+            //const QString password = "quarcs";
+            //if (!remountReadWrite(usb_mount_point, password))
+            //{
                 Logger::Log(functionName.toStdString() + " | Failed to remount USB as read-write.", LogLevel::WARNING, DeviceType::MAIN);
                 emit wsThread->sendMessageToClient("CaptureImageSaveStatus:USB-ReadOnly");
-                return 1;
-            }
+            //   return 1;
+            //}
         }
         
         // 检查U盘剩余空间（在创建目录之前）
@@ -8647,7 +8647,8 @@ int MainWindow::checkStorageSpaceAndCreateDirectory(const QString &sourcePath,
         QString normalizedPath = QDir(dirPathToCreate).absolutePath();
         
         // 检查路径是否在 /media/quarcs 下
-        if (normalizedPath.startsWith("/media/quarcs/"))
+        user = qEnvironmentVariable("USER");
+        if (normalizedPath.startsWith("/run/media/" + user))
         {
             // 提取 /media/quarcs/ 之后的部分
             QString pathAfterMedia = normalizedPath.mid(14); // 去掉 "/media/quarcs/"
@@ -8660,15 +8661,28 @@ int MainWindow::checkStorageSpaceAndCreateDirectory(const QString &sourcePath,
                 // 检查这个U盘名是否在映射表中（有效的U盘挂载点）
                 if (!usbMountPointsMap.contains(usbName))
                 {
-                    Logger::Log(functionName.toStdString() + " | Security check failed: Attempting to create directory in /media/quarcs/ but USB name '" + usbName.toStdString() + "' not found in mount points map. Path: " + dirPathToCreate.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+                    QString message = QString("%1 | Security check failed: Attempting to create directory in /run/media/%2 but USB name '%3' not found in mount points map. Path: %4")
+                                        .arg(functionName)
+                                        .arg(user)
+                                        .arg(usbName)
+                                        .arg(dirPathToCreate);
+
+                    Logger::Log(message.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+
                     emit wsThread->sendMessageToClient("CaptureImageSaveStatus:Failed");
                     return 1;
                 }
                 // 验证路径确实在U盘挂载点下
-                QString expectedMountPoint = "/media/quarcs/" + usbName;
+                QString expectedMountPoint = "/run/media/"+ user + "/" + usbName;
                 if (!normalizedPath.startsWith(expectedMountPoint))
                 {
-                    Logger::Log(functionName.toStdString() + " | Security check failed: Path does not match expected mount point. Path: " + dirPathToCreate.toStdString() + ", Expected mount point: " + expectedMountPoint.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+                    QString message = QString("%1 | Security check failed: Path does not match expected mount point. Path: '%2' , Expected mount point: %3")
+                                    .arg(functionName)
+                                    .arg(dirPathToCreate)
+                                    .arg(expectedMountPoint);
+
+                    Logger::Log(message.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+
                     emit wsThread->sendMessageToClient("CaptureImageSaveStatus:Failed");
                     return 1;
                 }
@@ -8676,28 +8690,40 @@ int MainWindow::checkStorageSpaceAndCreateDirectory(const QString &sourcePath,
             else
             {
                 // 路径格式不正确，可能是直接在 /media/quarcs/ 下创建文件夹
-                Logger::Log(functionName.toStdString() + " | Security check failed: Invalid path format in /media/quarcs/. Path: " + dirPathToCreate.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+                QString message = QString("%1 | Security check failed: Invalid path format in /run/media/%2. Path: '%3'")
+                                    .arg(functionName)
+                                    .arg(user)
+                                    .arg(dirPathToCreate);
+
+                Logger::Log(message.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+
                 emit wsThread->sendMessageToClient("CaptureImageSaveStatus:Failed");
                 return 1;
             }
         }
         // 额外检查：确保路径不是直接在 /media/quarcs 下（没有子目录）
-        else if (normalizedPath == "/media/quarcs")
+        else if (normalizedPath == "/run/media/" + user)
         {
-            Logger::Log(functionName.toStdString() + " | Security check failed: Attempting to create directory directly at /media/quarcs. Path: " + dirPathToCreate.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+            QString message = QString(" | Security check failed: Attempting to create directory directly at /run/media/%1. Path: '%2'")
+                                .arg(user)
+                                .arg(dirPathToCreate);
+
+            Logger::Log(message.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+
             emit wsThread->sendMessageToClient("CaptureImageSaveStatus:Failed");
             return 1;
         }
         
-        const QString password = "quarcs";
+        //const QString password = "quarcs";
         QProcess mkdirProcess;
-        mkdirProcess.start("sudo", {"-S", "mkdir", "-p", dirPathToCreate});
-        if (!mkdirProcess.waitForStarted() || !mkdirProcess.write((password + "\n").toUtf8()))
-        {
-            Logger::Log(functionName.toStdString() + " | Failed to create directory: " + dirPathToCreate.toStdString(), LogLevel::WARNING, DeviceType::MAIN);
-            emit wsThread->sendMessageToClient("CaptureImageSaveStatus:Failed");
-            return 1;
-        }
+        //mkdirProcess.start("sudo", {"-S", "mkdir", "-p", dirPathToCreate});
+        mkdirProcess.start("mkdir", {"-p", dirPathToCreate});
+        // if (!mkdirProcess.waitForStarted() || !mkdirProcess.write((password + "\n").toUtf8()))
+        // {
+        //     Logger::Log(functionName.toStdString() + " | Failed to create directory: " + dirPathToCreate.toStdString(), LogLevel::WARNING, DeviceType::MAIN);
+        //     emit wsThread->sendMessageToClient("CaptureImageSaveStatus:Failed");
+        //     return 1;
+        // }
         mkdirProcess.closeWriteChannel();
         mkdirProcess.waitForFinished(-1);
     }
@@ -8750,15 +8776,16 @@ int MainWindow::saveImageFile(const QString &sourcePath,
     if (isUSBSave)
     {
         // U盘保存使用sudo cp命令
-        const QString password = "quarcs";
+        //const QString password = "quarcs";
         QProcess cpProcess;
-        cpProcess.start("sudo", {"-S", "cp", sourcePath, destinationPath});
-        if (!cpProcess.waitForStarted() || !cpProcess.write((password + "\n").toUtf8()))
-        {
-            Logger::Log(functionName.toStdString() + " | Failed to execute sudo cp command.", LogLevel::WARNING, DeviceType::MAIN);
-            emit wsThread->sendMessageToClient("CaptureImageSaveStatus:Failed");
-            return 1;
-        }
+        // cpProcess.start("sudo", {"-S", "cp", sourcePath, destinationPath});
+        cpProcess.start("cp", {sourcePath, destinationPath});
+        // if (!cpProcess.waitForStarted() || !cpProcess.write((password + "\n").toUtf8()))
+        // {
+        //     Logger::Log(functionName.toStdString() + " | Failed to execute sudo cp command.", LogLevel::WARNING, DeviceType::MAIN);
+        //     emit wsThread->sendMessageToClient("CaptureImageSaveStatus:Failed");
+        //     return 1;
+        // }
         cpProcess.closeWriteChannel();
         cpProcess.waitForFinished(-1);
         
@@ -9501,13 +9528,14 @@ void MainWindow::MountOnlyGoto(double Ra_Hour, double Dec_Degree)
 }
 void MainWindow::DeleteImage(QStringList DelImgPath)
 {
-    std::string password = "quarcs"; // sudo 密码
+    //std::string password = "quarcs"; // sudo 密码
     for (int i = 0; i < DelImgPath.size(); i++)
     {
         if (i < DelImgPath.size())
         {
             std::ostringstream commandStream;
-            commandStream << "echo '" << password << "' | sudo -S rm -rf \"./" << DelImgPath[i].toStdString() << "\"";
+            //commandStream << "echo '" << password << "' | sudo -S rm -rf \"./" << DelImgPath[i].toStdString() << "\"";
+            commandStream << "rm -rf \"./" << DelImgPath[i].toStdString() << "\"";
             std::string command = commandStream.str();
 
             Logger::Log("DeleteImage | Deleted command:" + QString::fromStdString(command).toStdString(), LogLevel::INFO, DeviceType::MAIN);
@@ -9736,21 +9764,22 @@ bool MainWindow::isMountReadOnly(const QString &mountPoint)
     return (fsinfo.f_flag & ST_RDONLY) != 0;
 }
 
+// AstroArch use Udisks
 // 将文件系统挂载模式更改为读写模式
 bool MainWindow::remountReadWrite(const QString &mountPoint, const QString &password)
-{
-    QProcess process;
-    process.start("sudo", {"-S", "mount", "-o", "remount,rw", mountPoint});
-    if (!process.waitForStarted() || !process.write((password + "\n").toUtf8()))
-    {
-        Logger::Log("remountReadWrite | Failed to execute command: sudo mount", LogLevel::WARNING, DeviceType::MAIN);
-        emit wsThread->sendMessageToClient("getUSBFail:Failed to execute command: sudo mount -o remount,rw usb.");
-        return false;
-    }
-    process.closeWriteChannel();
-    process.waitForFinished(-1);
-    return process.exitCode() == 0;
-}
+ {
+//     QProcess process;
+//     process.start("sudo", {"-S", "mount", "-o", "remount,rw", mountPoint});
+//     if (!process.waitForStarted() || !process.write((password + "\n").toUtf8()))
+//     {
+//         Logger::Log("remountReadWrite | Failed to execute command: sudo mount", LogLevel::WARNING, DeviceType::MAIN);
+//         emit wsThread->sendMessageToClient("getUSBFail:Failed to execute command: sudo mount -o remount,rw usb.");
+//         return false;
+//     }
+//     process.closeWriteChannel();
+//     process.waitForFinished(-1);
+//     return process.exitCode() == 0;
+ }
 
 void MainWindow::RemoveImageToUsb(QStringList RemoveImgPath, QString usbName)
 {
@@ -9811,7 +9840,7 @@ void MainWindow::RemoveImageToUsb(QStringList RemoveImgPath, QString usbName)
             if (!getUSBMountPoint(usb_mount_point))
             {
                 // 获取U盘名称用于错误消息
-                QString base = "/media/";
+                QString base = "/run/media/";
                 QString username = QDir::home().dirName();
                 QString basePath = base + username;
                 QDir baseDir(basePath);
@@ -9831,7 +9860,7 @@ void MainWindow::RemoveImageToUsb(QStringList RemoveImgPath, QString usbName)
                     if (folderList.size() == 0)
                     {
                         emit wsThread->sendMessageToClient("ImageSaveErroe:USB-Null");
-                        Logger::Log("RemoveImageToUsb | No USB drive found.", LogLevel::WARNING, DeviceType::MAIN);
+                        Logger::Log("RemoveImageToUsb | No USB drive found." + basePath.toStdString(), LogLevel::WARNING, DeviceType::MAIN);
                     }
                     else
                     {
@@ -9844,7 +9873,7 @@ void MainWindow::RemoveImageToUsb(QStringList RemoveImgPath, QString usbName)
         }
     }
 
-    const QString password = "quarcs"; // sudo 密码
+    //const QString password = "quarcs"; // sudo 密码
 
     QStorageInfo storageInfo(usb_mount_point);
     if (storageInfo.isValid() && storageInfo.isReady())
@@ -9852,11 +9881,10 @@ void MainWindow::RemoveImageToUsb(QStringList RemoveImgPath, QString usbName)
         if (storageInfo.isReadOnly())
         {
             // 处理1: 该路径为只读设备
-            if (!remountReadWrite(usb_mount_point, password))
-            {
-                Logger::Log("RemoveImageToUsb | Failed to remount filesystem as read-write.", LogLevel::WARNING, DeviceType::MAIN);
-                return;
-            }
+            //if (!remountReadWrite(usb_mount_point, password))
+            //   Logger::Log("RemoveImageToUsb | Failed to remount filesystem as read-write.", LogLevel::WARNING, DeviceType::MAIN);
+            //   return;
+            //}
             Logger::Log("RemoveImageToUsb | Filesystem remounted as read-write successfully.", LogLevel::INFO, DeviceType::MAIN);
         }
         Logger::Log("RemoveImageToUsb | This path is for writable devices.", LogLevel::INFO, DeviceType::MAIN);
@@ -9912,8 +9940,9 @@ void MainWindow::RemoveImageToUsb(QStringList RemoveImgPath, QString usbName)
         QString destinationPath = folderPath + fileName.mid(pos1, pos - pos1 + 1);
         
         // 安全检查：避免在 /media/quarcs 路径下创建任何文件夹，避免被错误识别为U盘
+        user = qEnvironmentVariable("USER");
         QString normalizedDestPath = QDir(destinationPath).absolutePath();
-        if (normalizedDestPath.startsWith("/media/quarcs/"))
+        if (normalizedDestPath.startsWith("/run/media/" + user ))
         {
             // 提取 /media/quarcs/ 之后的部分
             QString pathAfterMedia = normalizedDestPath.mid(14); // 去掉 "/media/quarcs/"
@@ -9926,15 +9955,26 @@ void MainWindow::RemoveImageToUsb(QStringList RemoveImgPath, QString usbName)
                 // 检查这个U盘名是否在映射表中（有效的U盘挂载点）
                 if (!usbMountPointsMap.contains(usbName))
                 {
-                    Logger::Log("RemoveImageToUsb | Security check failed: Attempting to create directory in /media/quarcs/ but USB name '" + usbName.toStdString() + "' not found in mount points map. Path: " + destinationPath.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+                    QString message = QString("RemoveImageToUsb | Security check failed: Attempting to create directory in /run/media/%1. but USB name '%2' not found in mount points map. Path: %3")
+                                        .arg(user)
+                                        .arg(usbName)
+                                        .arg(destinationPath);
+
+                    Logger::Log(message.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+
                     emit wsThread->sendMessageToClient("HasMoveImgnNUmber:fail:" + QString::number(sumMoveImage));
                     continue;
                 }
                 // 验证路径确实在U盘挂载点下
-                QString expectedMountPoint = "/media/quarcs/" + usbName;
+                QString expectedMountPoint = "/run/media/" + user + "/" + usbName;
                 if (!normalizedDestPath.startsWith(expectedMountPoint))
                 {
-                    Logger::Log("RemoveImageToUsb | Security check failed: Path does not match expected mount point. Path: " + destinationPath.toStdString() + ", Expected mount point: " + expectedMountPoint.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+                    QString message = QString("RemoveImageToUsb | Security check failed: Path does not match expected mount point. Path: %1., Expected mount point: %2")
+                                        .arg(destinationPath)
+                                        .arg(expectedMountPoint);
+
+                    Logger::Log(message.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+
                     emit wsThread->sendMessageToClient("HasMoveImgnNUmber:fail:" + QString::number(sumMoveImage));
                     continue;
                 }
@@ -9942,37 +9982,49 @@ void MainWindow::RemoveImageToUsb(QStringList RemoveImgPath, QString usbName)
             else
             {
                 // 路径格式不正确，可能是直接在 /media/quarcs/ 下创建文件夹
-                Logger::Log("RemoveImageToUsb | Security check failed: Invalid path format in /media/quarcs/. Path: " + destinationPath.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+                QString message = QString("RemoveImageToUsb | Security check failed: Invalid path format in /run/media/%1. Path: %2")
+                                    .arg(user)
+                                    .arg(destinationPath);
+
+                Logger::Log(message.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+
                 emit wsThread->sendMessageToClient("HasMoveImgnNUmber:fail:" + QString::number(sumMoveImage));
                 continue;
             }
         }
         // 额外检查：确保路径不是直接在 /media/quarcs 下（没有子目录）
-        else if (normalizedDestPath == "/media/quarcs")
+        else if (normalizedDestPath == "/run/media/" + user)
         {
-            Logger::Log("RemoveImageToUsb | Security check failed: Attempting to create directory directly at /media/quarcs. Path: " + destinationPath.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+            QString message = QString("RemoveImageToUsb | Security check failed: Attempting to create directory directly at /run/media/%1. Path: %2")
+                                .arg(user)
+                                .arg(destinationPath);
+
+            Logger::Log(message.toStdString(), LogLevel::ERROR, DeviceType::MAIN);
+
             emit wsThread->sendMessageToClient("HasMoveImgnNUmber:fail:" + QString::number(sumMoveImage));
             continue;
         }
         
         QProcess process;
-        process.start("sudo", {"-S", "mkdir", "-p", destinationPath});
-        if (!process.waitForStarted() || !process.write((password + "\n").toUtf8()))
-        {
-            Logger::Log("RemoveImageToUsb | Failed to execute command: sudo mkdir.", LogLevel::WARNING, DeviceType::MAIN);
-            emit wsThread->sendMessageToClient("HasMoveImgnNUmber:fail:" + QString::number(sumMoveImage));
-            continue;
-        }
+//        process.start("sudo", {"-S", "mkdir", "-p", destinationPath});
+        process.start("mkdir", {"-p", destinationPath});
+        //if (!process.waitForStarted() || !process.write((password + "\n").toUtf8()))
+        //{
+        //   Logger::Log("RemoveImageToUsb | Failed to execute command: sudo mkdir.", LogLevel::WARNING, DeviceType::MAIN);
+        //    emit wsThread->sendMessageToClient("HasMoveImgnNUmber:fail:" + QString::number(sumMoveImage));
+        //    continue;
+        //}
         process.closeWriteChannel();
         process.waitForFinished(-1);
 
-        process.start("sudo", {"-S", "cp", "-r", imgPath, destinationPath});
-        if (!process.waitForStarted() || !process.write((password + "\n").toUtf8()))
-        {
-            Logger::Log("RemoveImageToUsb | Failed to execute command: sudo cp.", LogLevel::WARNING, DeviceType::MAIN);
-            emit wsThread->sendMessageToClient("HasMoveImgnNUmber:fail:" + QString::number(sumMoveImage));
-            continue;
-        }
+//        process.start("sudo", {"-S", "cp", "-r", imgPath, destinationPath});
+        process.start("cp", {"-r", imgPath, destinationPath});
+        // if (!process.waitForStarted() || !process.write((password + "\n").toUtf8()))
+        // {
+        //     Logger::Log("RemoveImageToUsb | Failed to execute command: sudo cp.", LogLevel::WARNING, DeviceType::MAIN);
+        //     emit wsThread->sendMessageToClient("HasMoveImgnNUmber:fail:" + QString::number(sumMoveImage));
+        //     continue;
+        // }
         process.closeWriteChannel();
         process.waitForFinished(-1);
 
@@ -9981,7 +10033,13 @@ void MainWindow::RemoveImageToUsb(QStringList RemoveImgPath, QString usbName)
 
         if (process.exitCode() == 0)
         {
-            Logger::Log("RemoveImageToUsb | Copied file: " + imgPath.toStdString() + " to " + destinationPath.toStdString(), LogLevel::INFO, DeviceType::MAIN);
+            Logger::Log(QString("RemoveImageToUsb | Copied file: %1  to  %2")
+            .arg(imgPath)
+            .arg(destinationPath)
+            .toStdString(),
+            LogLevel::ERROR,
+            DeviceType::MAIN);
+
         }
         else
         {
@@ -9998,17 +10056,30 @@ void MainWindow::RemoveImageToUsb(QStringList RemoveImgPath, QString usbName)
 
 void MainWindow::USBCheck()
 {
+    // AstroArch automount usb drive
+    QProcess usbautomountProcess;
+    usbautomountProcess.start("udiskie-mount", {"-a"});
+    usbautomountProcess.closeWriteChannel();
+
+
+    if (usbautomountProcess.waitForFinished()) {
+        qDebug() << "USB drive installation completed successfully.";
+    } else {
+        qWarning() << "Error or timeout during mounting:" << usbautomountProcess.errorString();
+    }
+    usbautomountProcess.waitForFinished(-1);
+
     // 清空之前的U盘映射表
     usbMountPointsMap.clear();
     
-    QString base = "/media/";
+    QString base = "/run/media/";
     QString username = QDir::home().dirName();
     QString basePath = base + username;
     QDir baseDir(basePath);
-    
+
     if (!baseDir.exists())
     {
-        Logger::Log("USBCheck | Base directory does not exist.", LogLevel::WARNING, DeviceType::MAIN);
+        Logger::Log("USBCheck | Base directory does not exist." + basePath.toStdString(), LogLevel::WARNING, DeviceType::MAIN);
         emit wsThread->sendMessageToClient("USBCheck:Null, Null");
         return;
     }
@@ -10022,7 +10093,7 @@ void MainWindow::USBCheck()
     if (folderList.size() == 0)
     {
         emit wsThread->sendMessageToClient("USBCheck:Null, Null");
-        Logger::Log("USBCheck | No USB drive found.", LogLevel::INFO, DeviceType::MAIN);
+        Logger::Log("USBCheck | No USB drive found." + basePath.toStdString(), LogLevel::INFO, DeviceType::MAIN);
         return;
     }
     
@@ -10030,7 +10101,7 @@ void MainWindow::USBCheck()
     QStringList validUsbList;
     for (const QString &folderName : folderList)
     {
-        QString usb_mount_point = basePath + "/" + folderName;
+        QString usb_mount_point = basePath + folderName;
         QStorageInfo storageInfo(usb_mount_point);
         
         // 验证这是否是一个真正挂载的存储设备
@@ -10092,7 +10163,7 @@ void MainWindow::USBCheck()
 // 获取U盘挂载点（统一函数，供其他函数复用）
 bool MainWindow::getUSBMountPoint(QString &usb_mount_point)
 {
-    QString base = "/media/";
+    QString base = "/run/media/";
     QString username = QDir::home().dirName();
     QString basePath = base + username;
     QDir baseDir(basePath);
@@ -10127,7 +10198,7 @@ bool MainWindow::getUSBMountPoint(QString &usb_mount_point)
     }
     else if (folderList.size() == 0)
     {
-        Logger::Log("getUSBMountPoint | No USB drive found.", LogLevel::WARNING, DeviceType::MAIN);
+        Logger::Log("getUSBMountPoint | No USB drive found." + basePath.toStdString(), LogLevel::WARNING, DeviceType::MAIN);
         return false;
     }
     else
@@ -10293,57 +10364,78 @@ void MainWindow::RecoverySloveResul()
     }
 }
 
-void MainWindow::editHotspotName(QString newName)
-{
-    Logger::Log("editHotspotName(" + newName.toStdString() + ") start ...", LogLevel::INFO, DeviceType::MAIN);
-    QString command = QString("echo 'quarcs' | sudo -S sed -i 's/^ssid=.*/ssid=%1/' /etc/NetworkManager/system-connections/RaspBerryPi-WiFi.nmconnection").arg(newName);
 
-    Logger::Log("editHotspotName | command:" + command.toStdString(), LogLevel::INFO, DeviceType::MAIN);
+// The hotspot must not be modified in AstroArch
 
-    QProcess process;
-    process.start("bash", QStringList() << "-c" << command);
-    process.waitForFinished();
-
-    QString HostpotName = getHotspotName();
-    Logger::Log("editHotspotName | New Hotspot Name:" + HostpotName.toStdString(), LogLevel::INFO, DeviceType::MAIN);
-
-    if (HostpotName == newName)
-    {
-        emit wsThread->sendMessageToClient("EditHotspotNameSuccess");
-        // restart NetworkManager
-        process.start("sudo systemctl restart NetworkManager");
-        process.waitForFinished();
-    }
-    else
-    {
-        emit wsThread->sendMessageToClient("EditHotspotNameFailed");
-        Logger::Log("editHotspotName | Edit Hotspot name failed.", LogLevel::WARNING, DeviceType::MAIN);
-    }
-}
+ void MainWindow::editHotspotName(QString newName)
+ {
+//     Logger::Log("editHotspotName(" + newName.toStdString() + ") start ...", LogLevel::INFO, DeviceType::MAIN);
+//     QString command = QString("echo 'quarcs' | sudo -S sed -i 's/^ssid=.*/ssid=%1/' /etc/NetworkManager/system-connections/RaspBerryPi-WiFi.nmconnection").arg(newName);
+//
+//     Logger::Log("editHotspotName | command:" + command.toStdString(), LogLevel::INFO, DeviceType::MAIN);
+//
+//     QProcess process;
+//     process.start("bash", QStringList() << "-c" << command);
+//     process.waitForFinished();
+//
+//     QString HostpotName = getHotspotName();
+//     Logger::Log("editHotspotName | New Hotspot Name:" + HostpotName.toStdString(), LogLevel::INFO, DeviceType::MAIN);
+//
+//     if (HostpotName == newName)
+//     {
+//         emit wsThread->sendMessageToClient("EditHotspotNameSuccess");
+//         // restart NetworkManager
+//         process.start("sudo systemctl restart NetworkManager");
+//         process.waitForFinished();
+//     }
+//     else
+//     {
+//         emit wsThread->sendMessageToClient("EditHotspotNameFailed");
+//         Logger::Log("editHotspotName | Edit Hotspot name failed.", LogLevel::WARNING, DeviceType::MAIN);
+//     }
+ }
 
 QString MainWindow::getHotspotName()
 {
     QProcess process;
-    process.start("sudo", QStringList() << "cat" << "/etc/NetworkManager/system-connections/RaspBerryPi-WiFi.nmconnection");
-    process.waitForFinished();
 
-    // Get the command output
-    QString output = process.readAllStandardOutput();
-    Logger::Log("getHotspotName | output:" + output.toStdString(), LogLevel::INFO, DeviceType::MAIN);
+    // Force the process to use the standard C locale (English)
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("LC_ALL", "C");
+    process.setProcessEnvironment(env);
 
-    // Look for the SSID configuration
-    QString ssidPattern = "ssid=";
-    int index = output.indexOf(ssidPattern);
-    if (index != -1)
-    {
-        int start = index + ssidPattern.length();
-        int end = output.indexOf("\n", start);
-        if (end == -1)
-            end = output.length();
-        return output.mid(start, end - start);
+    // Command: nmcli -t -f active,device,ssid dev wifi
+    // -t: Terse output (minimal formatting)
+    // -f: Fields to display (active status, device name, and SSID)
+    process.start("nmcli", QStringList() << "-t" << "-f" << "active,device,ssid" << "dev" << "wifi");
+
+    if (!process.waitForFinished()) {
+        Logger::Log("getHotspotName | Error: Process failed to finish", LogLevel::WARNING, DeviceType::MAIN);
+        return "N/A";
     }
 
-    // If SSID is not found, return a default value
+    QString output = process.readAllStandardOutput();
+    Logger::Log("getHotspotName | Raw output: " + output.toStdString(), LogLevel::INFO, DeviceType::MAIN);
+
+    // Split output into lines
+    QStringList lines = output.split("\n", Qt::SkipEmptyParts);
+
+    for (const QString& line : lines) {
+        // Since LC_ALL=C is set, we only need to check for "yes"
+        if (line.startsWith("yes")) {
+            // Line format is "active:device:ssid" (e.g., "yes:wlan0:MyRaspberryHotspot")
+            QStringList fields = line.split(":");
+            if (fields.size() >= 3) {
+                QString ssid = fields.at(2).trimmed();
+                if (!ssid.isEmpty()) {
+                    return ssid;
+                }
+            }
+        }
+    }
+
+    // Return default value if no active connection or SSID found
+    Logger::Log("getHotspotName | No active SSID found", LogLevel::WARNING, DeviceType::MAIN);
     return "N/A";
 }
 
@@ -10352,64 +10444,67 @@ QString MainWindow::getHotspotName()
  *        实现方式：使用 nmcli 将指定连接 down，然后通过 QTimer 在 delaySeconds 秒后 up。
  *        注意：该操作会在一段时间内中断当前 WiFi 热点和网络连接。
  */
-void MainWindow::restartHotspotWithDelay(int delaySeconds)
-{
-    Logger::Log("restartHotspotWithDelay(" + std::to_string(delaySeconds) + ") start ...",
-                LogLevel::INFO, DeviceType::MAIN);
 
-    // 当前热点连接名称（与 getHotspotName 读取的配置文件一致）
-    const QString connectionName = "RaspBerryPi-WiFi";
+// The hotspot must not be restarted in AstroArch
 
-    // 先关闭当前热点
-    {
-        QString command = QString("echo 'quarcs' | sudo -S nmcli connection down '%1'").arg(connectionName);
-        Logger::Log("restartHotspotWithDelay | down command:" + command.toStdString(),
-                    LogLevel::INFO, DeviceType::MAIN);
-
-        QProcess process;
-        process.start("bash", QStringList() << "-c" << command);
-        process.waitForFinished();
-
-        QString output = process.readAllStandardOutput();
-        QString errorOutput = process.readAllStandardError();
-        Logger::Log("restartHotspotWithDelay | down output:" + output.toStdString(),
-                    LogLevel::INFO, DeviceType::MAIN);
-        if (!errorOutput.isEmpty())
-        {
-            Logger::Log("restartHotspotWithDelay | down error:" + errorOutput.toStdString(),
-                        LogLevel::WARNING, DeviceType::MAIN);
-        }
-    }
-
-    // 使用 QTimer 在 delaySeconds 秒后重新启动热点，避免阻塞主线程
-    int delayMs = std::max(0, delaySeconds) * 1000;
-
-    QTimer::singleShot(delayMs, this, [this, connectionName]() {
-        Logger::Log("restartHotspotWithDelay | starting hotspot again ...",
-                    LogLevel::INFO, DeviceType::MAIN);
-
-        QString command = QString("echo 'quarcs' | sudo -S nmcli connection up '%1'").arg(connectionName);
-        Logger::Log("restartHotspotWithDelay | up command:" + command.toStdString(),
-                    LogLevel::INFO, DeviceType::MAIN);
-
-        QProcess process;
-        process.start("bash", QStringList() << "-c" << command);
-        process.waitForFinished();
-
-        QString output = process.readAllStandardOutput();
-        QString errorOutput = process.readAllStandardError();
-        Logger::Log("restartHotspotWithDelay | up output:" + output.toStdString(),
-                    LogLevel::INFO, DeviceType::MAIN);
-        if (!errorOutput.isEmpty())
-        {
-            Logger::Log("restartHotspotWithDelay | up error:" + errorOutput.toStdString(),
-                        LogLevel::WARNING, DeviceType::MAIN);
-        }
-
-        Logger::Log("restartHotspotWithDelay | hotspot restart sequence finished",
-                    LogLevel::INFO, DeviceType::MAIN);
-    });
-}
+ void MainWindow::restartHotspotWithDelay(int delaySeconds)
+ {
+//     Logger::Log("restartHotspotWithDelay(" + std::to_string(delaySeconds) + ") start ...",
+//                 LogLevel::INFO, DeviceType::MAIN);
+//
+//     // 当前热点连接名称（与 getHotspotName 读取的配置文件一致）
+//     const QString connectionName = "RaspBerryPi-WiFi";
+//
+//     // 先关闭当前热点
+//     {
+//         QString command = QString("echo 'quarcs' | sudo -S nmcli connection down '%1'").arg(connectionName);
+//         Logger::Log("restartHotspotWithDelay | down command:" + command.toStdString(),
+//                     LogLevel::INFO, DeviceType::MAIN);
+//
+//         QProcess process;
+//         process.start("bash", QStringList() << "-c" << command);
+//         process.waitForFinished();
+//
+//         QString output = process.readAllStandardOutput();
+//         QString errorOutput = process.readAllStandardError();
+//         Logger::Log("restartHotspotWithDelay | down output:" + output.toStdString(),
+//                     LogLevel::INFO, DeviceType::MAIN);
+//         if (!errorOutput.isEmpty())
+//         {
+//             Logger::Log("restartHotspotWithDelay | down error:" + errorOutput.toStdString(),
+//                         LogLevel::WARNING, DeviceType::MAIN);
+//         }
+//     }
+//
+//     // 使用 QTimer 在 delaySeconds 秒后重新启动热点，避免阻塞主线程
+//     int delayMs = std::max(0, delaySeconds) * 1000;
+//
+//     QTimer::singleShot(delayMs, this, [this, connectionName]() {
+//         Logger::Log("restartHotspotWithDelay | starting hotspot again ...",
+//                     LogLevel::INFO, DeviceType::MAIN);
+//
+//         QString command = QString("echo 'quarcs' | sudo -S nmcli connection up '%1'").arg(connectionName);
+//         Logger::Log("restartHotspotWithDelay | up command:" + command.toStdString(),
+//                     LogLevel::INFO, DeviceType::MAIN);
+//
+//         QProcess process;
+//         process.start("bash", QStringList() << "-c" << command);
+//         process.waitForFinished();
+//
+//         QString output = process.readAllStandardOutput();
+//         QString errorOutput = process.readAllStandardError();
+//         Logger::Log("restartHotspotWithDelay | up output:" + output.toStdString(),
+//                     LogLevel::INFO, DeviceType::MAIN);
+//         if (!errorOutput.isEmpty())
+//         {
+//             Logger::Log("restartHotspotWithDelay | up error:" + errorOutput.toStdString(),
+//                         LogLevel::WARNING, DeviceType::MAIN);
+//         }
+//
+//         Logger::Log("restartHotspotWithDelay | hotspot restart sequence finished",
+//                     LogLevel::INFO, DeviceType::MAIN);
+//     });
+ }
 
 void MainWindow::SendDebugToVueClient(const QString &msg)
 {
